@@ -2,6 +2,8 @@
 
 set -eox pipefail
 
+TOP_DIR=$( `pwd` )
+TOP_DIR_BASENAME=$( basename `pwd` )
 CWDIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 source "${CWDIR}/common.bash"
 
@@ -33,9 +35,6 @@ function gen_env(){
 		cd "\${1}/gpdb_src"
 		source gpAux/gpdemo/gpdemo-env.sh
 		make ${MAKE_TEST_COMMAND}
-
-        geninfo --rc lcov_branch_coverage=1 --no-external -o ./cov_ic.info .
-        lcov --rc lcov_branch_coverage=1 --add-tracefile cov_ic.info --no-external -o cov_merged.info
 	EOF
 
 	chmod a+x /opt/run_test.sh
@@ -62,7 +61,9 @@ function _main() {
         exit 1
     fi
 
-    yum install -y lcov
+    if [ "$( command -v lcov )" == "" ]; then
+        yum install -y lcov
+    fi
 
     # This ugly block exists since sles11 installs kerberos at a different path that is a test-only dependency
     if [ "$TEST_OS" == "sles" ]; then
@@ -82,6 +83,7 @@ function _main() {
     fi
 
     time configure
+    time install_gpdb_src_compiled
     time install_gpdb
     time setup_gpadmin_user
     time make_cluster
@@ -91,6 +93,16 @@ function _main() {
     if [ "${TEST_BINARY_SWAP}" == "true" ]; then
         time ./gpdb_src/concourse/scripts/test_binary_swap_gpdb.bash
     fi
+
+    GCOV_COMPILED_DIR=$( ls /tmp/build | grep -v $TOP_DIR_BASENAME )
+    pushd /tmp/build/$GCOV_COMPILED_DIR
+    geninfo --rc lcov_branch_coverage=1 --no-external -o ./cov_ic.info .
+    lcov --rc lcov_branch_coverage=1 --add-tracefile cov_ic.info --no-external -o cov_merged.info
+    if [ ! -d $TOP_DIR/gpdb_artifacts ]; then
+        mkdir $TOP_DIR/gpdb_artifacts
+    fi
+    cp cov_ic.info $TOP_DIR/gpdb_artifacts/.
+    popd
 }
 
 _main "$@"

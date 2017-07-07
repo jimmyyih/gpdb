@@ -34,6 +34,15 @@ resources:
     repository: pivotaldata/centos-gpdb-dev
     tag: '6-gcc6.2-llvm3.7'
 
+- name: gpdb_src_compiled
+  type: s3
+  source:
+    access_key_id: {{bucket-access-key-id}}
+    bucket: {{bucket-name}}
+    region_name: {{aws-region}}
+    secret_access_key: {{bucket-secret-access-key}}
+    versioned_file: gpdb_src_compiled.tar.gz
+
 - name: bin_gpdb_centos6
   type: s3
   source:
@@ -59,7 +68,7 @@ resources:
     bucket: {{bucket-name}}
     region_name: {{aws-region}}
     secret_access_key: {{bucket-secret-access-key}}
-    regexp: lcov/cov_ic.info
+    versioned_file: lcov/cov_ic.info
 
 ## ======================================================================
 ## jobs
@@ -88,6 +97,9 @@ jobs:
       TARGET_OS: centos
       TARGET_OS_VERSION: 6
   - aggregate:
+    - put: gpdb_src_compiled
+      params:
+        file: gpdb_artifacts/gpdb_src_compiled.tar.gz
     - put: bin_gpdb_centos6
       params:
         file: gpdb_artifacts/bin_gpdb.tar.gz
@@ -126,6 +138,8 @@ jobs:
   - aggregate:
     - get: gpdb_src
       passed: [compile_gpdb_centos6]
+    - get: gpdb_src_compiled
+      passed: [compile_gpdb_centos6]
     - get: bin_gpdb
       resource: bin_gpdb_centos6
       passed: [compile_gpdb_centos6]
@@ -146,4 +160,16 @@ jobs:
   - aggregate:
     - put: lcov_file
       params:
-        file: gpdb_src/cov_ic.info
+        file: gpdb_artifacts/cov_ic.info
+
+- name: code_coverage_aggregate
+  plan:
+  - aggregate:
+    - get: gpdb_src
+      passed: [compile_gpdb_centos6]
+    - get: lcov_file
+      passed: [icw_planner_centos6]
+    - get: centos-gpdb-dev-6
+  - task: aggregate
+    file: gpdb_src/concourse/tasks/code_coverage_aggregate.yml
+    image: centos-gpdb-dev-6

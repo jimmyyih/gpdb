@@ -1,0 +1,8 @@
+platform: linux
+image_resource:
+  type: docker-image
+inputs:
+  - name: gpdb_src
+  - name: lcov_file
+run:
+  path: gpdb_src/concourse/scripts/code_coverage_aggregate.bash

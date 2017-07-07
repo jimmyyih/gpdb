@@ -18,6 +18,10 @@ function install_gpdb() {
     tar -xzf bin_gpdb/bin_gpdb.tar.gz -C /usr/local/greenplum-db-devel
 }
 
+function install_gpdb_src_compiled() {
+    tar --same-owner -xzf gpdb_src_compiled/gpdb_src_compiled.tar.gz -C /tmp/build
+}
+
 function configure() {
   source /opt/gcc_env.sh
   pushd gpdb_src

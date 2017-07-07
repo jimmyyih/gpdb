@@ -1,6 +1,7 @@
 #!/bin/bash -l
 set -exo pipefail
 
+TOP_DIR=$(pwd)
 GREENPLUM_INSTALL_DIR=/usr/local/greenplum-db-devel
 export GPDB_ARTIFACTS_DIR
 GPDB_ARTIFACTS_DIR=$(pwd)/$OUTPUT_ARTIFACT_DIR
@@ -110,6 +111,14 @@ function unittest_check_gpdb() {
   popd
 }
 
+function export_gpdb_src_compiled() {
+  TARBALL="$GPDB_ARTIFACTS_DIR"/gpdb_src_compiled.tar.gz
+  TOP_DIR_BASENAME=$( basename $TOP_DIR )
+  pushd $TOP_DIR/..
+    tar -czpf ${TOP_DIR}/${TARBALL} ${TOP_DIR_BASENAME}/gpdb_src
+  popd
+}
+
 function export_gpdb() {
   TARBALL="$GPDB_ARTIFACTS_DIR"/$GPDB_BIN_FILENAME
   pushd $GREENPLUM_INSTALL_DIR
@@ -190,6 +199,7 @@ function _main() {
       # require `./configure --with-zlib`.
       unittest_check_gpdb
   fi
+  export_gpdb_src_compiled
   export_gpdb
   export_gpdb_extensions
   export_gpdb_win32_ccl
