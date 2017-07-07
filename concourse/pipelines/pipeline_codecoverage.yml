@@ -139,6 +139,7 @@ jobs:
     - get: gpdb_src
       passed: [compile_gpdb_centos6]
     - get: gpdb_src_compiled
+      resource: gpdb_src_compiled
       passed: [compile_gpdb_centos6]
     - get: bin_gpdb
       resource: bin_gpdb_centos6

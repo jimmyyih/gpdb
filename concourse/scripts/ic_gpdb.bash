@@ -2,7 +2,7 @@
 
 set -eox pipefail
 
-TOP_DIR=$( `pwd` )
+TOP_DIR=$(pwd)
 TOP_DIR_BASENAME=$( basename `pwd` )
 CWDIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 source "${CWDIR}/common.bash"
