@@ -115,7 +115,7 @@ function export_gpdb_src_compiled() {
   TARBALL="$GPDB_ARTIFACTS_DIR"/gpdb_src_compiled.tar.gz
   TOP_DIR_BASENAME=$( basename $TOP_DIR )
   pushd $TOP_DIR/..
-    tar -czpf ${TOP_DIR}/${TARBALL} ${TOP_DIR_BASENAME}/gpdb_src
+    tar -czpf ${TARBALL} ${TOP_DIR_BASENAME}/gpdb_src
   popd
 }
 
