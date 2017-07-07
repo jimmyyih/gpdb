@@ -25,6 +25,10 @@ function prep_env_for_centos() {
       ;;
 
     6)
+      if [[ ${CONFIGURE_FLAGS} == *"--enable-coverage"* ]]; then
+        yum install -y lcov
+      fi
+
       BLDARCH=rhel6_x86_64
       export JAVA_HOME=/usr/lib/jvm/java-1.7.0-openjdk.x86_64
       source /opt/gcc_env.sh
@@ -173,6 +177,7 @@ function _main() {
   # builds.
   export ADDON_DIR=addon
   export CONFIGURE_FLAGS=${CONFIGURE_FLAGS}
+
   # We cannot symlink the addon directory here because `make -C` resolves the
   # symlink and `cd`s to the actual directory. Currently the Makefile in the
   # addon directory assumes that it is located in a particular location under

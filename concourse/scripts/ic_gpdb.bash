@@ -33,6 +33,9 @@ function gen_env(){
 		cd "\${1}/gpdb_src"
 		source gpAux/gpdemo/gpdemo-env.sh
 		make ${MAKE_TEST_COMMAND}
+
+        geninfo --rc lcov_branch_coverage=1 --no-external -o ./cov_ic.info .
+        lcov --rc lcov_branch_coverage=1 --add-tracefile cov_ic.info --no-external -o cov_merged.info
 	EOF
 
 	chmod a+x /opt/run_test.sh
@@ -58,6 +61,8 @@ function _main() {
 	echo "Configure TEST_OS to be centos or sles"
         exit 1
     fi
+
+    yum install -y lcov
 
     # This ugly block exists since sles11 installs kerberos at a different path that is a test-only dependency
     if [ "$TEST_OS" == "sles" ]; then
