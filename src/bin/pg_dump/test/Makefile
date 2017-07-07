@@ -14,4 +14,4 @@ LIBS := $(filter-out -lresolv, $(LIBS))
 LIBS := $(filter-out -lreadline -ledit -ltermcap -lncurses -lcurses -lcurl -lssl -lcrypto, $(LIBS))
 
 dumputils.t: dumputils_test.o $(CMOCKERY_OBJS) ../keywords.o ../kwlookup.o
-	$(CC) $^ $(libpq_pgport) $(LDFLAGS) $(LIBS) $(libpq) -o $@
+	$(CC) $^ $(libpq_pgport) $(CFLAGS) $(LDFLAGS) $(LIBS) $(libpq) -o $@
