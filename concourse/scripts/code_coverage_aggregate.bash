@@ -12,7 +12,7 @@ function _main() {
     fi
 
     local add_tracefile_string = ""
-    for i in `ls *.info`; do
+    for i in `find . -name "*.info"`; do
         add_tracefile_string="${add_tracefile_string} --add-tracefile ${i}"
     done
     lcov --rc lcov_branch_coverage=1 ${add_tracefile_string} --no-external -o coverage_aggregate.info

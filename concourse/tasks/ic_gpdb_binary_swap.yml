@@ -7,6 +7,7 @@ inputs:
   - name: bin_gpdb
   - name: binary_swap_gpdb
 outputs:
+  - name: gpdb_artifacts
 params:
   MAKE_TEST_COMMAND: ""
   BLDWRAP_POSTGRES_CONF_ADDONS: ""
