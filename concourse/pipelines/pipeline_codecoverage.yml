@@ -196,7 +196,7 @@ jobs:
   - aggregate:
     - put: lcov_file_gporca
       params:
-        file: gpdb_artifacts/cov_ic_gporca.info
+        file: gpdb_artifacts/cov_ic.info
 
 - name: code_coverage_aggregate
   plan:
