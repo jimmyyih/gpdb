@@ -33,7 +33,7 @@ ssh_keyscan_for_user() {
 }
 
 transfer_ownership() {
-  chown -R gpadmin:gpadmin gpdb_src
+  chown -R gpadmin:gpadmin /tmp/build/*
   [ -d /usr/local/gpdb ] && chown -R gpadmin:gpadmin /usr/local/gpdb
   [ -d /usr/local/greenplum-db-devel ] && chown -R gpadmin:gpadmin /usr/local/greenplum-db-devel
   chown -R gpadmin:gpadmin /home/gpadmin

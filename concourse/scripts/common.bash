@@ -20,10 +20,6 @@ function install_gpdb() {
 
 function install_gpdb_src_compiled() {
     tar -xzf gpdb_src_compiled/gpdb_src_compiled.tar.gz -C /tmp/build
-
-    TOP_DIR_BASENAME=$( basename `pwd` )
-    GCOV_COMPILED_DIR=$( ls /tmp/build | grep -v $TOP_DIR_BASENAME )
-    chown -R gpadmin:gpadmin /tmp/build/$GCOV_COMPILED_DIR
 }
 
 function configure() {
