@@ -157,7 +157,6 @@ jobs:
     - get: binary_swap_gpdb
       resource: binary_swap_gpdb_centos6
       passed: [compile_gpdb_binary_swap_centos6]
-      trigger: true
     - get: centos-gpdb-dev-6
   - task: ic_gpdb
     file: gpdb_src/concourse/tasks/ic_gpdb_binary_swap.yml
@@ -202,6 +201,9 @@ jobs:
   plan:
   - aggregate:
     - get: gpdb_src
+      passed: [compile_gpdb_centos6]
+    - get: gpdb_src_compiled
+      resource: gpdb_src_compiled
       passed: [compile_gpdb_centos6]
     - get: lcov_file
       passed: [icw_planner_centos6]

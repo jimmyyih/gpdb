@@ -3,6 +3,8 @@ image_resource:
   type: docker-image
 inputs:
   - name: gpdb_src
+  - name: gpdb_src_compiled
   - name: lcov_file
+  - name: lcov_file_gporca
 run:
   path: gpdb_src/concourse/scripts/code_coverage_aggregate.bash
