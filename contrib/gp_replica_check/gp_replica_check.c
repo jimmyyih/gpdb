@@ -1,3 +1,5 @@
+#include <ftw.h>
+
 #include "postgres.h"
 #include "fmgr.h"
 #include "libpq/md5.h"
@@ -5,9 +7,11 @@
 #include "executor/spi.h"
 #include "catalog/gp_segment_config.h"
 
+#include "access/heapam.h"
+
 PG_MODULE_MAGIC;
 
-static bool calculate_checksum(char* filepath, char* md5);
+static bool compare_files(char* primaryfilepath, char* mirrorfilepath);
 
 typedef struct fspair
 {
@@ -15,46 +19,71 @@ typedef struct fspair
 	char* mirrorfslocation;
 } fspair;
 
-bool
-calculate_checksum(char* filepath, char* md5)
+static bool
+compare_files(char* primaryfilepath, char* mirrorfilepath)
 {
-	File file = 0;
-	char buf[BLCKSZ * 32];
-	int  bytesRead;
+	File primaryFile = 0;
+	File mirrorFile = 0;
+	char primaryFileBuf[BLCKSZ * 32];
+	char mirrorFileBuf[BLCKSZ * 32];
+	int primaryFileBytesRead;
+	int mirrorFileBytesRead;
 
-	elog(LOG, "filepath is %s", filepath);
-	file = PathNameOpenFile(filepath, O_RDONLY | PG_BINARY, S_IRUSR);
+	char primaryfilechecksum[33] = {0};
+	char mirrorfilechecksum[33] = {0};
 
-	if (file < 0)
+	primaryFile = PathNameOpenFile(primaryfilepath, O_RDONLY | PG_BINARY, S_IRUSR);
+	if (primaryFile < 0)
 		return false;
 
-	bytesRead = FileRead(file, buf, sizeof(buf));
-	if (bytesRead >= 0)
-		pg_md5_hash(buf, bytesRead, md5);
+	mirrorFile = PathNameOpenFile(mirrorfilepath, O_RDONLY | PG_BINARY, S_IRUSR);
+	if (mirrorFile < 0)
+		return false;
 
-	FileClose(file);
+	primaryFileBytesRead = FileRead(primaryFile, primaryFileBuf, sizeof(primaryFileBuf));
+	if (primaryFileBytesRead >= 0)
+		pg_md5_hash(primaryFileBuf, primaryFileBytesRead, primaryfilechecksum);
+
+	mirrorFileBytesRead = FileRead(mirrorFile, mirrorFileBuf, sizeof(mirrorFileBuf));
+	if (mirrorFileBytesRead >= 0)
+		pg_md5_hash(mirrorFileBuf, mirrorFileBytesRead, mirrorfilechecksum);
+
+	FileClose(primaryFile);
+	FileClose(mirrorFile);
+
+	if (strcmp(primaryfilechecksum, mirrorfilechecksum) == 0)
+		return true;
+
+	char maskedPrimaryBuf[BLCKSZ];
+	char maskedMirrorBuf[BLCKSZ];
+	int blockno = 0;
+
+	elog(NOTICE, "file checksums do not match, doing block by block with masking on file %s", primaryfilepath);
+	while (blockno * BLCKSZ < primaryFileBytesRead)
+	{
+		heap_mask(primaryFileBuf + blockno * BLCKSZ, blockno);
+		heap_mask(mirrorFileBuf + blockno * BLCKSZ, blockno);
+
+		memcpy(maskedPrimaryBuf, primaryFileBuf + blockno * BLCKSZ, BLCKSZ);
+		memcpy(maskedMirrorBuf, mirrorFileBuf + blockno * BLCKSZ, BLCKSZ);
+
+		pg_md5_hash(maskedPrimaryBuf, BLCKSZ, primaryfilechecksum);
+		pg_md5_hash(maskedMirrorBuf, BLCKSZ, mirrorfilechecksum);
+
+		if (strcmp(primaryfilechecksum, mirrorfilechecksum) != 0)
+			return false;
+
+		blockno += 1;
+	}
+
 	return true;
 }
-
-/* get_filespace_locations(int content, char *primary_loc, char *mirror_loc) */
-/* { */
-/* 	// get the dbids corresponding to the content For e.g content 0 -> dbids 1, 4 */
-/*     // Lookup filespace_entry for the dbids */
-/*     // Return the fselocation from filespace entry as the filespace locations */
-/* } */
-
-/* static void */
-/* get_filespace_map() */
-/* { */
-	
-/* } */
 
 PG_FUNCTION_INFO_V1(gp_replica_check);
 
 Datum
 gp_replica_check(PG_FUNCTION_ARGS)
 {
-//	elog(NOTICE, "Inside gp_replica_check");
 
 	List  *fslist = NIL;
 	int 			proc;
@@ -67,13 +96,6 @@ gp_replica_check(PG_FUNCTION_ARGS)
 		elog(NOTICE, "No mirrors exist in gp_segment_configuration. Nothing to verify.");
 		PG_RETURN_BOOL(false);
 	}
-
-	/* Using SPI, get the necessary information */
-
-	/*
-	 * assemble our query string
-	 */
-	initStringInfo(&sqlstmt);
 
 	appendStringInfo(&sqlstmt,
 					 "SELECT c.content, c.role, c.mode, f.fselocation "
@@ -88,12 +110,8 @@ gp_replica_check(PG_FUNCTION_ARGS)
 						errdetail("SPI_connect failed in gp_replica_check")));
 	}
 
-	/* Do the query. */
 	ret = SPI_execute(sqlstmt.data, false, 0);
 	proc = SPI_processed;
-
-	elog(NOTICE, "proc is %d", proc);
-	elog(NOTICE, "ret is %d", ret);
 
 	if (ret > 0 && SPI_tuptable != NULL)
 	{
@@ -142,7 +160,6 @@ gp_replica_check(PG_FUNCTION_ARGS)
 				map->mirrorfslocation = pstrdup(SPI_getvalue(tuple1, tupdesc, 4));
 			}
 
-			elog(NOTICE, "Inside loop 1 -- Primary: %s | Mirror: %s", map->primaryfslocation, map->mirrorfslocation);
 			fslist = lappend(fslist, map);
 
 			MemoryContextSwitchTo(cxt_save);
@@ -152,22 +169,20 @@ gp_replica_check(PG_FUNCTION_ARGS)
 	SPI_finish();
 	pfree(sqlstmt.data);
 
-	elog(NOTICE, "the fslist length is %d", list_length(fslist));
 	ListCell *l = NULL;
 	foreach(l, fslist)
 	{
 		fspair *t = (fspair *)lfirst(l);
 		elog(NOTICE, "Primary: %s | Mirror: %s", t->primaryfslocation, t->mirrorfslocation);
 
-		/* Go after the base/../[0-9]+ and global/[0-9]+*/
+		// Go after the base/../[0-9]+ and global/[0-9]+
 		char primaryfilepath[2000];
 		char mirrorfilepath[2000];
 
-		sprintf(primaryfilepath, "%s/global", t->primaryfslocation);
-		sprintf(mirrorfilepath, "%s/global", t->mirrorfslocation);
+		sprintf(primaryfilepath, "%s/base/16404", t->primaryfslocation);
+		sprintf(mirrorfilepath, "%s/base/16404", t->mirrorfslocation);
 
 		DIR *primarydir = AllocateDir(primaryfilepath);
-		/* DIR *mirrordir = AllocateDir(mirrorfilepath); */
 
 		struct dirent *dent = NULL;
 		bool equivalent = true;
@@ -178,16 +193,13 @@ gp_replica_check(PG_FUNCTION_ARGS)
 			char primarychecksum[33] = {0};
 			bool eq = false;
 			sprintf(primaryfilename, "%s/%s", primaryfilepath, dent->d_name);
-			calculate_checksum(primaryfilename, primarychecksum);
-			elog(NOTICE, "primary checksum for file %s is %s", primaryfilename, primarychecksum);
 
 			char mirrorfilename[2000] = {'\0'};
 			char mirrorchecksum[33] = {0};
 			sprintf(mirrorfilename, "%s/%s", mirrorfilepath, dent->d_name);
-			calculate_checksum(mirrorfilename, mirrorchecksum);
-			elog(NOTICE, "mirror checksum for file %s is %s", mirrorfilename, mirrorchecksum);
 
-			eq = (strcmp(primarychecksum, mirrorchecksum) == 0);
+			eq = compare_files(primaryfilename, mirrorfilename);
+
 			if (!eq)
 				elog(NOTICE, "Files %s and %s differ", primaryfilename, mirrorfilename);
 			equivalent &= eq;
@@ -196,51 +208,7 @@ gp_replica_check(PG_FUNCTION_ARGS)
 		elog(NOTICE, "equivalent? %d", equivalent);
 
 		FreeDir(primarydir);
-
-
-		/* while ((dent = ReadDir(dir, mirrorfilepath)) != NULL) */
-		/* { */
- 		/* 	char mirrorfilename[2000] = {'\0'}; */
-		/* 	char mirrorchecksum[33] = {0}; */
-		/* 	sprintf(mirrorfilename, "%s/%s", mirrorfilepath, dent->d_name); */
-		/* 	calculate_checksum(mirrorfilename, mirrorchecksum); */
-		/* 	elog(NOTICE, "mirror checksum for file %s is %s", mirrorfilename, mirrorchecksum); */
-		/* } */
-		/* FreeDir(dir); */
-
-
 	}
-
-
-	/* char* primarybasedir = "/Users/jyih/gitdir/github/gpdb/gpAux/gpdemo/datadirs/dbfast1/demoDataDir0/base/12086/"; */
-	/* char* mirrorbasedir = "/Users/jyih/gitdir/github/gpdb/gpAux/gpdemo/datadirs/dbfast_mirror1/demoDataDir0/base/12086/"; */
-
-	/* char relfilenode[64]; */
-
-	/* snprintf(relfilenode, sizeof(relfilenode), "%d", rd_rel->relfilenode); */
-
-	/* char primaryfilepath[2000]; */
-	/* char mirrorfilepath[2000]; */
-
-	/* strcpy(primaryfilepath, primarybasedir); */
-	/* strcat(primaryfilepath, relfilenode); */
-
-	/* strcpy(mirrorfilepath, mirrorbasedir); */
-	/* strcat(mirrorfilepath, relfilenode); */
-
-	/* char primarychecksum[33] = {0}; */
-	/* char mirrorchecksum[33] = {0}; */
-
-	/* bool presult = calculate_checksum(primaryfilepath, primarychecksum); */
-	/* bool mresult = calculate_checksum(mirrorfilepath, mirrorchecksum); */
-
-	/* if (!presult || !mresult) */
-	/* 	continue; */
-	/* else */
-	/* { */
-	/* 	elog(LOG, "primarychecksum: %s | mirrorchecksum: %s", primarychecksum, mirrorchecksum); */
-	/* 	i++; */
-	/* } */
 
 	PG_RETURN_BOOL(true);
 }
