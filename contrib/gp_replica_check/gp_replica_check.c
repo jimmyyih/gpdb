@@ -97,6 +97,7 @@ gp_replica_check(PG_FUNCTION_ARGS)
 		PG_RETURN_BOOL(false);
 	}
 
+	initStringInfo(&sqlstmt);
 	appendStringInfo(&sqlstmt,
 					 "SELECT c.content, c.role, c.mode, f.fselocation "
 					 "FROM gp_segment_configuration c, pg_filespace_entry f "
