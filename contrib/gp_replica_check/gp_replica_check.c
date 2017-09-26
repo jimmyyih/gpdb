@@ -1,27 +1,21 @@
-#include <ftw.h>
-
 #include "postgres.h"
-#include "fmgr.h"
-#include "libpq/md5.h"
-#include "utils/builtins.h"
-#include "executor/spi.h"
-#include "catalog/gp_segment_config.h"
-#include "catalog/pg_am.h"
+
 #include "access/heapam.h"
 #include "access/nbtree.h"
 #include "access/gist_private.h"
 #include "access/gin.h"
+#include "access/slru.h"
+#include "libpq/md5.h"
+#include "utils/builtins.h"
 
 PG_MODULE_MAGIC;
+
+extern Datum gp_replica_check(PG_FUNCTION_ARGS);
 
 static void mask_block(char *pagedata, BlockNumber blkno, Oid relam);
 static bool compare_files(char* primaryfilepath, char* mirrorfilepath, char *relfilenode);
 
-typedef struct fspair
-{
-	char* primaryfslocation;
-	char* mirrorfslocation;
-} fspair;
+#define SLRU_PAGES_PER_SEGMENT 32
 
 static void
 mask_block(char *pagedata, BlockNumber blockno, Oid relam)
@@ -52,13 +46,13 @@ compare_files(char* primaryfilepath, char* mirrorfilepath, char *relfilenode)
 {
 	File primaryFile = 0;
 	File mirrorFile = 0;
-	char primaryFileBuf[BLCKSZ * 32];
-	char mirrorFileBuf[BLCKSZ * 32];
+	char primaryFileBuf[BLCKSZ * SLRU_PAGES_PER_SEGMENT];
+	char mirrorFileBuf[BLCKSZ * SLRU_PAGES_PER_SEGMENT];
 	int primaryFileBytesRead;
 	int mirrorFileBytesRead;
 
-	char primaryfilechecksum[33] = {0};
-	char mirrorfilechecksum[33] = {0};
+	char primaryfilechecksum[SLRU_MD5_BUFLEN] = {0};
+	char mirrorfilechecksum[SLRU_MD5_BUFLEN] = {0};
 
 	primaryFile = PathNameOpenFile(primaryfilepath, O_RDONLY | PG_BINARY, S_IRUSR);
 	if (primaryFile < 0)
@@ -143,7 +137,6 @@ compare_files(char* primaryfilepath, char* mirrorfilepath, char *relfilenode)
 		}
 	}
 
-
 	return true;
 }
 
@@ -154,30 +147,32 @@ gp_replica_check(PG_FUNCTION_ARGS)
 {
 	char *primarydirpath = TextDatumGetCString(PG_GETARG_DATUM(0));
 	char *mirrordirpath = TextDatumGetCString(PG_GETARG_DATUM(1));
-
 	DIR *primarydir = AllocateDir(primarydirpath);
-
 	struct dirent *dent = NULL;
-	bool equivalent = true;
+	bool dir_equal = true;
 
 	while ((dent = ReadDir(primarydir, primarydirpath)) != NULL)
 	{
-		char primaryfilename[2000] = {'\0'};
-		bool eq = false;
-		sprintf(primaryfilename, "%s/%s", primarydirpath, dent->d_name);
+		char primaryfilename[MAXPGPATH] = {'\0'};
+		char mirrorfilename[MAXPGPATH] = {'\0'};
+		bool file_eq = false;
 
-		char mirrorfilename[2000] = {'\0'};
+		if ((strncmp(dent->d_name, "pg", 2)) == 0)
+			continue;
+
+		sprintf(primaryfilename, "%s/%s", primarydirpath, dent->d_name);
 		sprintf(mirrorfilename, "%s/%s", mirrordirpath, dent->d_name);
 
-		eq = compare_files(primaryfilename, mirrorfilename, dent->d_name);
+		file_eq = compare_files(primaryfilename, mirrorfilename, dent->d_name);
 
-		if (!eq)
+		if (!file_eq)
 			elog(NOTICE, "Files %s and %s differ", primaryfilename, mirrorfilename);
-		equivalent &= eq;
+
+		dir_equal &= file_eq;
 	}
 
-	elog(NOTICE, "equivalent? %d", equivalent);
+	elog(NOTICE, "Equivalent: %s", dir_equal ? "true" : "false");
 	FreeDir(primarydir);
 
-	PG_RETURN_BOOL(equivalent);
+	PG_RETURN_BOOL(dir_equal);
 }
