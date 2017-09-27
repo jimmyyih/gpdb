@@ -64,8 +64,21 @@ WHERE fep.fsedbid = gscp.dbid
         if len(aj) > 1:
             fsmap.setdefault(aj[2], []).append(ReplicaCheck(aj))
 
-    #print fsmap
     return fsmap
+
+def install_extension():
+    sql = '''
+SELECT datname FROM pg_database WHERE datname != 'template0'
+'''
+    sql2 = '''
+CREATE EXTENSION IF NOT EXISTS gp_replica_check
+'''
+
+    a = subprocess.check_output('psql postgres -t -c "%s"' % sql, stderr=subprocess.STDOUT, shell=True).split('\n')
+    for ai in a:
+        if len(ai) > 1:
+            b = subprocess.check_output('psql %s -t -c "%s"' % (ai.strip(), sql2), stderr=subprocess.STDOUT, shell=True)
+            print b
 
 def start_verification(fsmap):
     for content, fsinfo_list in fsmap.items():
@@ -74,5 +87,6 @@ def start_verification(fsmap):
             fsinfo.join()
 
 if __name__ == '__main__':
+    install_extension()
     fsmap = get_fsmap()
     start_verification(fsmap)
