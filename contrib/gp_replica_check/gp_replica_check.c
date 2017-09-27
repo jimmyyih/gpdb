@@ -166,12 +166,11 @@ gp_replica_check(PG_FUNCTION_ARGS)
 		file_eq = compare_files(primaryfilename, mirrorfilename, dent->d_name);
 
 		if (!file_eq)
-			elog(NOTICE, "Files %s and %s differ", primaryfilename, mirrorfilename);
+			elog(WARNING, "Files %s and %s differ", primaryfilename, mirrorfilename);
 
 		dir_equal &= file_eq;
 	}
 
-	elog(NOTICE, "Equivalent: %s", dir_equal ? "true" : "false");
 	FreeDir(primarydir);
 
 	PG_RETURN_BOOL(dir_equal);

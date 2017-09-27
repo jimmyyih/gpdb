@@ -19,11 +19,13 @@ class ReplicaCheck(threading.Thread):
         self.mloc = row[7]
 
     def __str__(self):
-        return 'Host: %s, Port: %s, Database: %s, Primary Filespace Location: %s, \
-                Mirror Filespace Location: %s' % (self.host, self.port, self.datname,
-                                                  self.ploc, self.mloc)
+        return 'Host: %s, Port: %s, Database: %s\n\
+Primary Filespace Location: %s\n\
+Mirror Filespace Location: %s' % (self.host, self.port, self.datname,
+                                          self.ploc, self.mloc)
 
     def run(self):
+        print(self)
         cmd = '''PGOPTIONS='-c gp_session_role=utility' psql -h %s -p %s -c "select * from gp_replica_check('%s', '%s')" %s''' % (self.host, self.port, self.ploc, self.mloc, self.datname)
         res = subprocess.check_output(cmd, stderr=subprocess.STDOUT, shell=True)
         print res
@@ -66,12 +68,12 @@ WHERE fep.fsedbid = gscp.dbid
 
     return fsmap
 
-def install_extension():
+def install_extension_and_checkpoint():
     sql = '''
 SELECT datname FROM pg_database WHERE datname != 'template0'
 '''
     sql2 = '''
-CREATE EXTENSION IF NOT EXISTS gp_replica_check
+CREATE EXTENSION IF NOT EXISTS gp_replica_check; CHECKPOINT
 '''
 
     a = subprocess.check_output('psql postgres -t -c "%s"' % sql, stderr=subprocess.STDOUT, shell=True).split('\n')
@@ -87,6 +89,6 @@ def start_verification(fsmap):
             fsinfo.join()
 
 if __name__ == '__main__':
-    install_extension()
+    install_extension_and_checkpoint()
     fsmap = get_fsmap()
     start_verification(fsmap)
