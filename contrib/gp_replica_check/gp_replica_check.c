@@ -9,6 +9,7 @@
 #include "replication/walsender_private.h"
 #include "replication/walsender.h"
 #include "utils/builtins.h"
+#include "utils/hsearch.h"
 
 PG_MODULE_MAGIC;
 
@@ -240,6 +241,12 @@ compare_last_write_lsns(XLogRecPtr *start_write_lsns, XLogRecPtr *end_write_lsns
 	return true;
 }
 
+
+typedef struct primaryfileentry
+{
+	char name[MAXPGPATH];
+} primaryfileentry;
+
 PG_FUNCTION_INFO_V1(gp_replica_check);
 
 Datum
@@ -248,8 +255,20 @@ gp_replica_check(PG_FUNCTION_ARGS)
 	char *primarydirpath = TextDatumGetCString(PG_GETARG_DATUM(0));
 	char *mirrordirpath = TextDatumGetCString(PG_GETARG_DATUM(1));
 	DIR *primarydir = AllocateDir(primarydirpath);
+	DIR *mirrordir = AllocateDir(mirrordirpath);
 	struct dirent *dent = NULL;
 	bool dir_equal = true;
+
+	HTAB *primaryfileshash;
+	HASHCTL primaryfiles;
+	int hash_flags;
+	MemSet(&primaryfiles, 0, sizeof(primaryfiles));
+	primaryfiles.keysize = MAXPGPATH;
+	primaryfiles.entrysize = sizeof(primaryfileentry);
+	primaryfiles.hash = tag_hash;
+	hash_flags = (HASH_ELEM | HASH_FUNCTION);
+
+	primaryfileshash = hash_create("primary files hash table", 50000, &primaryfiles, hash_flags);
 
 	/* Store the last commit to compare at the end */
 	XLogRecPtr *start_write_lsns = get_last_write_lsn();
@@ -276,9 +295,34 @@ gp_replica_check(PG_FUNCTION_ARGS)
 			elog(WARNING, "Files %s and %s differ", primaryfilename, mirrorfilename);
 
 		dir_equal = dir_equal && file_eq;
+
+		// Store each dent->d_name into a hash table
+		hash_search(primaryfileshash, dent->d_name, HASH_ENTER, NULL);
 	}
 
 	FreeDir(primarydir);
+
+	// Open up mirrordirpath and verify each mirror file exist in the primary hashmap as well
+	bool found = false;
+	char extra_file[MAXPGPATH];
+	while ((dent = ReadDir(mirrordir, mirrordirpath)) != NULL)
+	{
+		if ((strncmp(dent->d_name, "pg", 2)) == 0)
+			continue;
+
+		hash_search(primaryfileshash, dent->d_name, HASH_FIND, &found);
+		if (!found)
+		{
+			strcpy(extra_file, dent->d_name);
+			break;
+		}
+	}
+	FreeDir(mirrordir);
+
+	if (!found)
+	{
+		elog(WARNING, "Found extra file on mirror: %s", extra_file);
+	}
 
 	/* Compare stored last commit with now */
 	XLogRecPtr *end_write_lsns = get_last_write_lsn();
