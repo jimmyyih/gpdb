@@ -68,12 +68,12 @@ WHERE fep.fsedbid = gscp.dbid
 
     return fsmap
 
-def install_extension_and_checkpoint():
+def install_extension():
     sql = '''
 SELECT datname FROM pg_database WHERE datname != 'template0'
 '''
     sql2 = '''
-CREATE EXTENSION IF NOT EXISTS gp_replica_check; CHECKPOINT
+CREATE EXTENSION IF NOT EXISTS gp_replica_check
 '''
 
     a = subprocess.check_output('psql postgres -t -c "%s"' % sql, stderr=subprocess.STDOUT, shell=True).split('\n')
@@ -82,6 +82,11 @@ CREATE EXTENSION IF NOT EXISTS gp_replica_check; CHECKPOINT
             b = subprocess.check_output('psql %s -t -c "%s"' % (ai.strip(), sql2), stderr=subprocess.STDOUT, shell=True)
             print b
 
+def run_checkpoint():
+    sql = '''CHECKPOINT'''
+    a = subprocess.check_output('psql postgres -t -c "%s"' % sql, stderr=subprocess.STDOUT, shell=True)
+    print a
+
 def start_verification(fsmap):
     for content, fsinfo_list in fsmap.items():
         for fsinfo in fsinfo_list:
@@ -89,6 +94,7 @@ def start_verification(fsmap):
             fsinfo.join()
 
 if __name__ == '__main__':
-    install_extension_and_checkpoint()
+    install_extension()
+    run_checkpoint()
     fsmap = get_fsmap()
     start_verification(fsmap)

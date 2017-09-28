@@ -6,14 +6,28 @@
 #include "access/gin.h"
 #include "access/slru.h"
 #include "libpq/md5.h"
+#include "replication/walsender_private.h"
+#include "replication/walsender.h"
 #include "utils/builtins.h"
 
 PG_MODULE_MAGIC;
 
 extern Datum gp_replica_check(PG_FUNCTION_ARGS);
 
+typedef struct WalSenderInfo
+{
+	XLogRecPtr write;
+	XLogRecPtr flush;
+	XLogRecPtr apply;
+	WalSndState state;
+} WalSenderInfo;
+
 static void mask_block(char *pagedata, BlockNumber blkno, Oid relam);
 static bool compare_files(char* primaryfilepath, char* mirrorfilepath, char *relfilenode);
+static void get_replication_info(WalSenderInfo **walsndinfo);
+static bool check_walsender_synced();
+static XLogRecPtr* get_last_write_lsn();
+static bool compare_last_write_lsns(XLogRecPtr *start_write_lsns, XLogRecPtr *end_write_lsns);
 
 #define SLRU_PAGES_PER_SEGMENT 32
 
@@ -140,6 +154,92 @@ compare_files(char* primaryfilepath, char* mirrorfilepath, char *relfilenode)
 	return true;
 }
 
+static void
+get_replication_info(WalSenderInfo **walsndinfo)
+{
+	int i;
+
+	LWLockAcquire(SyncRepLock, LW_SHARED);
+	for (i = 0; i < max_wal_senders; i++)
+	{
+		/* use volatile pointer to prevent code rearrangement */
+		volatile WalSnd *walsnd = &WalSndCtl->walsnds[i];
+
+		if (walsnd->pid != 0)
+		{
+			walsndinfo[i] = (WalSenderInfo *)palloc(sizeof(WalSenderInfo));
+			walsndinfo[i]->write = walsnd->write;
+			walsndinfo[i]->flush = walsnd->flush;
+			walsndinfo[i]->apply = walsnd->apply;
+			walsndinfo[i]->state = walsnd->state;
+		}
+	}
+	LWLockRelease(SyncRepLock);
+}
+
+static bool
+check_walsender_synced()
+{
+	int			i;
+	bool		synced;
+	int			max_retry = 60;
+	int			retry = 0;
+
+	WalSenderInfo *walsndinfo[max_wal_senders];
+
+	while (retry < max_retry)
+	{
+		synced = true;
+		memset(walsndinfo, 0, sizeof(walsndinfo));
+
+		get_replication_info(walsndinfo);
+		for (i = 0; i < max_wal_senders; i++)
+		{
+			synced = synced && (walsndinfo[i]->state == WALSNDSTATE_STREAMING &&
+								XLByteEQ(walsndinfo[i]->flush, walsndinfo[i]->apply));
+		}
+
+		if (synced)
+			break;
+
+		pg_usleep(1000000);
+		retry++;
+	}
+
+	return synced;
+}
+
+static XLogRecPtr*
+get_last_write_lsn()
+{
+	int i;
+	XLogRecPtr *write_lsns;
+	WalSenderInfo *walsndinfo[max_wal_senders];
+
+	get_replication_info(walsndinfo);
+
+	write_lsns = (XLogRecPtr *)palloc(max_wal_senders * sizeof(WalSenderInfo));
+	for (i = 0; i < max_wal_senders; ++i)
+	{
+		write_lsns[i] = walsndinfo[i]->write;
+	}
+	return write_lsns;
+}
+
+static bool
+compare_last_write_lsns(XLogRecPtr *start_write_lsns, XLogRecPtr *end_write_lsns)
+{
+	int i;
+
+	for (i = 0; i < max_wal_senders; ++i)
+	{
+		if (!XLByteEQ(start_write_lsns[i], end_write_lsns[i]))
+			return false;
+	}
+
+	return true;
+}
+
 PG_FUNCTION_INFO_V1(gp_replica_check);
 
 Datum
@@ -150,6 +250,13 @@ gp_replica_check(PG_FUNCTION_ARGS)
 	DIR *primarydir = AllocateDir(primarydirpath);
 	struct dirent *dent = NULL;
 	bool dir_equal = true;
+
+	/* Store the last commit to compare at the end */
+	XLogRecPtr *start_write_lsns = get_last_write_lsn();
+
+	/* Verify LSN values are correct through pg_stat_replication */
+	if (!check_walsender_synced())
+		PG_RETURN_BOOL(false);
 
 	while ((dent = ReadDir(primarydir, primarydirpath)) != NULL)
 	{
@@ -168,10 +275,21 @@ gp_replica_check(PG_FUNCTION_ARGS)
 		if (!file_eq)
 			elog(WARNING, "Files %s and %s differ", primaryfilename, mirrorfilename);
 
-		dir_equal &= file_eq;
+		dir_equal = dir_equal && file_eq;
 	}
 
 	FreeDir(primarydir);
 
+	/* Compare stored last commit with now */
+	XLogRecPtr *end_write_lsns = get_last_write_lsn();
+
+	if (!compare_last_write_lsns(start_write_lsns, end_write_lsns))
+	{
+		elog(WARNING, "IO may have been performed during the check. Results may not be correct.");
+		PG_RETURN_BOOL(false);
+	}
+
 	PG_RETURN_BOOL(dir_equal);
 }
+
+
