@@ -17,6 +17,7 @@ extern Datum gp_replica_check(PG_FUNCTION_ARGS);
 
 typedef struct WalSenderInfo
 {
+	XLogRecPtr sent;
 	XLogRecPtr write;
 	XLogRecPtr flush;
 	XLogRecPtr apply;
@@ -27,8 +28,8 @@ static void mask_block(char *pagedata, BlockNumber blkno, Oid relam);
 static bool compare_files(char* primaryfilepath, char* mirrorfilepath, char *relfilenode);
 static void get_replication_info(WalSenderInfo **walsndinfo);
 static bool check_walsender_synced();
-static XLogRecPtr* get_last_write_lsn();
-static bool compare_last_write_lsns(XLogRecPtr *start_write_lsns, XLogRecPtr *end_write_lsns);
+static XLogRecPtr* get_last_sent_lsn();
+static bool compare_last_sent_lsns(XLogRecPtr *start_sent_lsns, XLogRecPtr *end_sent_lsns);
 
 #define SLRU_PAGES_PER_SEGMENT 32
 
@@ -169,6 +170,7 @@ get_replication_info(WalSenderInfo **walsndinfo)
 		if (walsnd->pid != 0)
 		{
 			walsndinfo[i] = (WalSenderInfo *)palloc(sizeof(WalSenderInfo));
+			walsndinfo[i]->sent = walsnd->sentPtr;
 			walsndinfo[i]->write = walsnd->write;
 			walsndinfo[i]->flush = walsnd->flush;
 			walsndinfo[i]->apply = walsnd->apply;
@@ -211,31 +213,35 @@ check_walsender_synced()
 }
 
 static XLogRecPtr*
-get_last_write_lsn()
+get_last_sent_lsn()
 {
 	int i;
-	XLogRecPtr *write_lsns;
+	XLogRecPtr *sent_lsns;
 	WalSenderInfo *walsndinfo[max_wal_senders];
 
 	get_replication_info(walsndinfo);
 
-	write_lsns = (XLogRecPtr *)palloc(max_wal_senders * sizeof(WalSenderInfo));
+	sent_lsns = (XLogRecPtr *)palloc(max_wal_senders * sizeof(WalSenderInfo));
 	for (i = 0; i < max_wal_senders; ++i)
 	{
-		write_lsns[i] = walsndinfo[i]->write;
+		sent_lsns[i] = walsndinfo[i]->sent;
 	}
-	return write_lsns;
+	return sent_lsns;
 }
 
 static bool
-compare_last_write_lsns(XLogRecPtr *start_write_lsns, XLogRecPtr *end_write_lsns)
+compare_last_sent_lsns(XLogRecPtr *start_sent_lsns, XLogRecPtr *end_sent_lsns)
 {
 	int i;
 
 	for (i = 0; i < max_wal_senders; ++i)
 	{
-		if (!XLByteEQ(start_write_lsns[i], end_write_lsns[i]))
+		if (!XLByteEQ(start_sent_lsns[i], end_sent_lsns[i]))
+		{
+			elog(NOTICE, "start_sent_lsn = %X, end_sent_lsn = %X",
+				 start_sent_lsns[i].xrecoff, end_sent_lsns[i].xrecoff);
 			return false;
+		}
 	}
 
 	return true;
@@ -265,17 +271,17 @@ gp_replica_check(PG_FUNCTION_ARGS)
 	MemSet(&primaryfiles, 0, sizeof(primaryfiles));
 	primaryfiles.keysize = MAXPGPATH;
 	primaryfiles.entrysize = sizeof(primaryfileentry);
-	primaryfiles.hash = tag_hash;
+	primaryfiles.hash = string_hash;
 	hash_flags = (HASH_ELEM | HASH_FUNCTION);
 
 	primaryfileshash = hash_create("primary files hash table", 50000, &primaryfiles, hash_flags);
 
-	/* Store the last commit to compare at the end */
-	XLogRecPtr *start_write_lsns = get_last_write_lsn();
-
 	/* Verify LSN values are correct through pg_stat_replication */
 	if (!check_walsender_synced())
 		PG_RETURN_BOOL(false);
+
+	/* Store the last commit to compare at the end */
+	XLogRecPtr *start_sent_lsns = get_last_sent_lsn();
 
 	while ((dent = ReadDir(primarydir, primarydirpath)) != NULL)
 	{
@@ -283,7 +289,8 @@ gp_replica_check(PG_FUNCTION_ARGS)
 		char mirrorfilename[MAXPGPATH] = {'\0'};
 		bool file_eq = false;
 
-		if ((strncmp(dent->d_name, "pg", 2)) == 0)
+		if (strncmp(dent->d_name, "pg", 2) == 0
+			|| strncmp(dent->d_name, ".", 1) == 0)
 			continue;
 
 		sprintf(primaryfilename, "%s/%s", primarydirpath, dent->d_name);
@@ -297,37 +304,30 @@ gp_replica_check(PG_FUNCTION_ARGS)
 		dir_equal = dir_equal && file_eq;
 
 		// Store each dent->d_name into a hash table
-		hash_search(primaryfileshash, dent->d_name, HASH_ENTER, NULL);
+		bool found;
+		hash_search(primaryfileshash, dent->d_name, HASH_ENTER, &found);
 	}
 
 	FreeDir(primarydir);
 
 	// Open up mirrordirpath and verify each mirror file exist in the primary hashmap as well
 	bool found = false;
-	char extra_file[MAXPGPATH];
 	while ((dent = ReadDir(mirrordir, mirrordirpath)) != NULL)
 	{
-		if ((strncmp(dent->d_name, "pg", 2)) == 0)
+		if (strncmp(dent->d_name, "pg", 2) == 0
+			|| strncmp(dent->d_name, ".", 1) == 0)
 			continue;
 
 		hash_search(primaryfileshash, dent->d_name, HASH_FIND, &found);
 		if (!found)
-		{
-			strcpy(extra_file, dent->d_name);
-			break;
-		}
+			elog(WARNING, "Found extra file on mirror: %s", dent->d_name);
 	}
 	FreeDir(mirrordir);
 
-	if (!found)
-	{
-		elog(WARNING, "Found extra file on mirror: %s", extra_file);
-	}
-
 	/* Compare stored last commit with now */
-	XLogRecPtr *end_write_lsns = get_last_write_lsn();
+	XLogRecPtr *end_sent_lsns = get_last_sent_lsn();
 
-	if (!compare_last_write_lsns(start_write_lsns, end_write_lsns))
+	if (!compare_last_sent_lsns(start_sent_lsns, end_sent_lsns))
 	{
 		elog(WARNING, "IO may have been performed during the check. Results may not be correct.");
 		PG_RETURN_BOOL(false);
