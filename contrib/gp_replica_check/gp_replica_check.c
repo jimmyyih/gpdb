@@ -128,7 +128,11 @@ compare_files(char* primaryfilepath, char* mirrorfilepath, char *relfilenode)
 
 	if (relstorage == 'a')
 	{
-		// Use appendonly access methods to do block by block comparison
+		/*
+		 * We do not expect the AO files to ever have more data on the primary
+		 * than on the mirror so the above md5 checksum checks should suffice.
+		 */
+		elog(WARNING, "Skipping AO file block check");
 	}
 	else if (relstorage == 'h')
 	{
@@ -164,7 +168,6 @@ get_replication_info(WalSenderInfo **walsndinfo)
 	LWLockAcquire(SyncRepLock, LW_SHARED);
 	for (i = 0; i < max_wal_senders; i++)
 	{
-		/* use volatile pointer to prevent code rearrangement */
 		volatile WalSnd *walsnd = &WalSndCtl->walsnds[i];
 
 		if (walsnd->pid != 0)
@@ -226,6 +229,7 @@ get_last_sent_lsn()
 	{
 		sent_lsns[i] = walsndinfo[i]->sent;
 	}
+
 	return sent_lsns;
 }
 
@@ -237,21 +241,11 @@ compare_last_sent_lsns(XLogRecPtr *start_sent_lsns, XLogRecPtr *end_sent_lsns)
 	for (i = 0; i < max_wal_senders; ++i)
 	{
 		if (!XLByteEQ(start_sent_lsns[i], end_sent_lsns[i]))
-		{
-			elog(NOTICE, "start_sent_lsn = %X, end_sent_lsn = %X",
-				 start_sent_lsns[i].xrecoff, end_sent_lsns[i].xrecoff);
 			return false;
-		}
 	}
 
 	return true;
 }
-
-
-typedef struct primaryfileentry
-{
-	char name[MAXPGPATH];
-} primaryfileentry;
 
 PG_FUNCTION_INFO_V1(gp_replica_check);
 
@@ -270,7 +264,7 @@ gp_replica_check(PG_FUNCTION_ARGS)
 	int hash_flags;
 	MemSet(&primaryfiles, 0, sizeof(primaryfiles));
 	primaryfiles.keysize = MAXPGPATH;
-	primaryfiles.entrysize = sizeof(primaryfileentry);
+	primaryfiles.entrysize = MAXPGPATH;
 	primaryfiles.hash = string_hash;
 	hash_flags = (HASH_ELEM | HASH_FUNCTION);
 
@@ -303,14 +297,14 @@ gp_replica_check(PG_FUNCTION_ARGS)
 
 		dir_equal = dir_equal && file_eq;
 
-		// Store each dent->d_name into a hash table
+		/* Store each filename for fileset comparison later */
 		bool found;
 		hash_search(primaryfileshash, dent->d_name, HASH_ENTER, &found);
 	}
 
 	FreeDir(primarydir);
 
-	// Open up mirrordirpath and verify each mirror file exist in the primary hashmap as well
+	/* Open up mirrordirpath and verify each mirror file exist in the primary hash table */
 	bool found = false;
 	while ((dent = ReadDir(mirrordir, mirrordirpath)) != NULL)
 	{
