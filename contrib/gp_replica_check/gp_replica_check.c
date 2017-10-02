@@ -24,6 +24,7 @@ typedef struct WalSenderInfo
 	WalSndState state;
 } WalSenderInfo;
 
+static char* relam_to_string(Oid relam);
 static void mask_block(char *pagedata, BlockNumber blkno, Oid relam);
 static bool compare_files(char* primaryfilepath, char* mirrorfilepath, char *relfilenode);
 static void get_replication_info(WalSenderInfo **walsndinfo);
@@ -32,6 +33,26 @@ static XLogRecPtr* get_last_sent_lsn();
 static bool compare_last_sent_lsns(XLogRecPtr *start_sent_lsns, XLogRecPtr *end_sent_lsns);
 
 #define SLRU_PAGES_PER_SEGMENT 32
+
+static char*
+relam_to_string(Oid relam)
+{
+	switch(relam)
+	{
+		case BTREE_AM_OID:
+			return "b-tree index";
+		case HASH_AM_OID:
+			return "hash index";
+		case GIST_AM_OID:
+			return "GiST index";
+		case GIN_AM_OID:
+			return "GIN index";
+		case BITMAP_AM_OID:
+			return "bitmap index";
+		default:
+			return "heap table";
+	}
+}
 
 static void
 mask_block(char *pagedata, BlockNumber blockno, Oid relam)
@@ -122,7 +143,7 @@ compare_files(char* primaryfilepath, char* mirrorfilepath, char *relfilenode)
 
 	if (!relstorage)
 	{
-		elog(WARNING, "Did not get a valid relstorage for %s", relfilenode);
+		elog(WARNING, "Invalid relstorage for %s", relfilenode);
 		return false;
 	}
 
@@ -133,6 +154,7 @@ compare_files(char* primaryfilepath, char* mirrorfilepath, char *relfilenode)
 		 * than on the mirror so the above md5 checksum checks should suffice.
 		 */
 		elog(WARNING, "Skipping AO file block check");
+		return false;
 	}
 	else if (relstorage == 'h')
 	{
@@ -149,7 +171,8 @@ compare_files(char* primaryfilepath, char* mirrorfilepath, char *relfilenode)
 
 			if (strcmp(primaryfilechecksum, mirrorfilechecksum) != 0)
 			{
-				elog(WARNING, "relfilenode %s blockno %d is mismatched", relfilenode, blockno);
+				elog(WARNING, "%s relfilenode %s blockno %d is mismatched",
+					 relam_to_string(relam), relfilenode, blockno);
 				return false;
 			}
 
@@ -314,7 +337,7 @@ gp_replica_check(PG_FUNCTION_ARGS)
 
 		hash_search(primaryfileshash, dent->d_name, HASH_FIND, &found);
 		if (!found)
-			elog(WARNING, "Found extra file on mirror: %s", dent->d_name);
+			elog(WARNING, "Found extra file on mirror: %s/%s", mirrordirpath, dent->d_name);
 	}
 	FreeDir(mirrordir);
 
@@ -329,5 +352,3 @@ gp_replica_check(PG_FUNCTION_ARGS)
 
 	PG_RETURN_BOOL(dir_equal);
 }
-
-
