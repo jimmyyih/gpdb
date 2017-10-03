@@ -4,7 +4,6 @@
 #include "access/nbtree.h"
 #include "access/gist_private.h"
 #include "access/gin.h"
-#include "access/slru.h"
 #include "libpq/md5.h"
 #include "replication/walsender_private.h"
 #include "replication/walsender.h"
@@ -19,6 +18,7 @@ typedef struct relfilenodentry
 {
 	Oid relfilenode;
 	int relam;
+	int relkind;
 	char relstorage;
 } relfilenodeentry;
 
@@ -31,9 +31,14 @@ typedef struct WalSenderInfo
 	WalSndState state;
 } WalSenderInfo;
 
-static void init_check_relation_type(char *newval);
-static int get_relation_type(int relam, char relstorage, int relkind);
-static char* relam_to_string(Oid relam);
+typedef struct RelationTypeData
+{
+	char *name;
+	bool include;
+} RelationTypeData;
+
+static void init_relation_types(char *include_relation_types);
+static RelationTypeData get_relation_type_data(int relam, char relstorage, int relkind);
 static void mask_block(char *pagedata, BlockNumber blkno, Oid relam);
 static bool compare_files(char* primaryfilepath, char* mirrorfilepath, char *relfilenode, HTAB *relfilenode_map);
 static void get_replication_info(WalSenderInfo **walsndinfo);
@@ -41,21 +46,29 @@ static bool check_walsender_synced();
 static XLogRecPtr* get_last_sent_lsn();
 static bool compare_last_sent_lsns(XLogRecPtr *start_sent_lsns, XLogRecPtr *end_sent_lsns);
 
-#define SLRU_PAGES_PER_SEGMENT 32
+#define atooid(x) ((Oid) strtoul((x), NULL, 10))
+#define MD5_BUFLEN 33 /* MD5 is 32 bytes + 1 null-terminator */
+#define MAX_INCLUDE_RELATION_TYPES 8
 
-static bool check_relation_type[8];
+static RelationTypeData relation_types[MAX_INCLUDE_RELATION_TYPES] = {
+	{"btree", false},
+	{"hash", false},
+	{"gist", false},
+	{"gin", false},
+	{"bitmap", false},
+	{"heap", false},
+	{"sequence", false},
+	{"ao", false}
+};
 
 static void
-init_check_relation_type(char *newval)
+init_relation_types(char *include_relation_types)
 {
 	List *elemlist;
 	ListCell *l;
 
-	/* Initialize the array */
-	MemSet(check_relation_type, 0, sizeof(check_relation_type) * sizeof(bool));
-
 	/* Parse string into list of identifiers */
-	if (!SplitIdentifierString(newval, ',', &elemlist))
+	if (!SplitIdentifierString(include_relation_types, ',', &elemlist))
 	{
 		list_free(elemlist);
 
@@ -68,91 +81,67 @@ init_check_relation_type(char *newval)
 	foreach(l, elemlist)
 	{
 		char *tok = (char *) lfirst(l);
+		bool found = false;
 		int type;
 
 		/* Check for 'all'. */
 		if (pg_strcasecmp(tok, "all") == 0)
 		{
-			for (type = 0; type < sizeof(check_relation_type); type++)
-					check_relation_type[type] = true;
+			for (type = 0; type < MAX_INCLUDE_RELATION_TYPES; type++)
+				relation_types[type].include = true;
+
+			found = true;
 		}
 		else
 		{
-			if (pg_strcasecmp(tok, "btree") == 0)
-				check_relation_type[0] = true;
-			else if (pg_strcasecmp(tok, "hash") == 0)
-				check_relation_type[1] = true;
-			else if (pg_strcasecmp(tok, "gist") == 0)
-				check_relation_type[2] = true;
-			else if (pg_strcasecmp(tok, "gin") == 0)
-				check_relation_type[3] = true;
-			else if (pg_strcasecmp(tok, "bitmap") == 0)
-				check_relation_type[4] = true;
-			else if (pg_strcasecmp(tok, "heap") == 0)
-				check_relation_type[5] = true;
-			else if (pg_strcasecmp(tok, "ao") == 0)
-				check_relation_type[6] = true;
-			else if (pg_strcasecmp(tok, "sequence") == 0)
-				check_relation_type[7] = true;
-			else
+			for (type = 0; type < MAX_INCLUDE_RELATION_TYPES; type++)
 			{
-				list_free(elemlist);
-				ereport(ERROR,
-						(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-						 errmsg("Unrecognized key word: \"%s\".", tok)));
+				if (pg_strcasecmp(tok, relation_types[type].name) == 0)
+				{
+					relation_types[type].include = true;
+					found = true;
+					break;
+				}
 			}
+		}
 
+		if (!found)
+		{
+			list_free(elemlist);
+			ereport(ERROR,
+					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					 errmsg("Unrecognized key word: \"%s\".", tok)));
 		}
 	}
 
 	list_free(elemlist);
 }
 
-static int
-get_relation_type(int relam, char relstorage, int relkind)
+static RelationTypeData
+get_relation_type_data(int relam, char relstorage, int relkind)
 {
 	switch(relam)
 	{
 		case BTREE_AM_OID:
-			return 0;
+			return relation_types[0];
 		case HASH_AM_OID:
-			return 1;
+			return relation_types[1];
 		case GIST_AM_OID:
-			return 2;
+			return relation_types[2];
 		case GIN_AM_OID:
-			return 3;
+			return relation_types[3];
 		case BITMAP_AM_OID:
-			return 4;
+			return relation_types[4];
 		default:
 			if (relstorage == RELSTORAGE_HEAP)
 				if (relkind == RELKIND_SEQUENCE)
-					return 7;
+					return relation_types[6];
 				else
-					return 5;
+					return relation_types[5];
 			else if (relstorage_is_ao(relstorage))
-				return 6;
+				return relation_types[7];
 			else
-				elog(ERROR, "bad relam or relstorage %d %c", relam, relstorage);
-	}
-}
-
-static char*
-relam_to_string(Oid relam)
-{
-	switch(relam)
-	{
-		case BTREE_AM_OID:
-			return "b-tree index";
-		case HASH_AM_OID:
-			return "hash index";
-		case GIST_AM_OID:
-			return "GiST index";
-		case GIN_AM_OID:
-			return "GIN index";
-		case BITMAP_AM_OID:
-			return "bitmap index";
-		default:
-			return "heap table";
+				elog(ERROR, "invalid relam %d or relstorage %c", relam, relstorage);
 	}
 }
 
@@ -185,15 +174,16 @@ compare_files(char* primaryfilepath, char* mirrorfilepath, char *relfilenode, HT
 {
 	File primaryFile = 0;
 	File mirrorFile = 0;
-	char primaryFileBuf[BLCKSZ * SLRU_PAGES_PER_SEGMENT];
-	char mirrorFileBuf[BLCKSZ * SLRU_PAGES_PER_SEGMENT];
-	char primaryfilechecksum[SLRU_MD5_BUFLEN] = {0};
-	char mirrorfilechecksum[SLRU_MD5_BUFLEN] = {0};
+	char primaryFileBuf[BLCKSZ];
+	char mirrorFileBuf[BLCKSZ];
+	char primaryfilechecksum[MD5_BUFLEN] = {0};
+	char mirrorfilechecksum[MD5_BUFLEN] = {0};
 	char maskedPrimaryBuf[BLCKSZ];
 	char maskedMirrorBuf[BLCKSZ];
 	int primaryFileBytesRead;
 	int mirrorFileBytesRead;
 	int blockno = 0;
+	bool match = true;
 
 	primaryFile = PathNameOpenFile(primaryfilepath, O_RDONLY | PG_BINARY, S_IRUSR);
 	if (primaryFile < 0)
@@ -201,23 +191,12 @@ compare_files(char* primaryfilepath, char* mirrorfilepath, char *relfilenode, HT
 
 	mirrorFile = PathNameOpenFile(mirrorfilepath, O_RDONLY | PG_BINARY, S_IRUSR);
 	if (mirrorFile < 0)
+	{
+		FileClose(primaryFile);
 		return false;
+	}
 
-	primaryFileBytesRead = FileRead(primaryFile, primaryFileBuf, sizeof(primaryFileBuf));
-	if (primaryFileBytesRead >= 0)
-		pg_md5_hash(primaryFileBuf, primaryFileBytesRead, primaryfilechecksum);
-
-	mirrorFileBytesRead = FileRead(mirrorFile, mirrorFileBuf, sizeof(mirrorFileBuf));
-	if (mirrorFileBytesRead >= 0)
-		pg_md5_hash(mirrorFileBuf, mirrorFileBytesRead, mirrorfilechecksum);
-
-	FileClose(primaryFile);
-	FileClose(mirrorFile);
-
- 	if (strcmp(primaryfilechecksum, mirrorfilechecksum) == 0)
-		return true;
-
-	int rnode = atoi(relfilenode);
+	int rnode = atooid(relfilenode);
 	bool found = false;
 	relfilenodeentry *entry = (relfilenodeentry *)hash_search(relfilenode_map, (void *)&rnode, HASH_FIND, &found);
 	if (relstorage_is_ao(entry->relstorage))
@@ -227,17 +206,30 @@ compare_files(char* primaryfilepath, char* mirrorfilepath, char *relfilenode, HT
 		 * than on the mirror so the above md5 checksum checks should suffice.
 		 */
 		elog(WARNING, "Skipping AO file block check");
-		return false;
+		match = false;
 	}
 	else if (entry->relstorage == 'h')
 	{
-		while (blockno * BLCKSZ < primaryFileBytesRead)
+		while (true)
 		{
-			mask_block(primaryFileBuf + blockno * BLCKSZ, blockno, entry->relam);
-			mask_block(mirrorFileBuf + blockno * BLCKSZ, blockno, entry->relam);
+			primaryFileBytesRead = FileRead(primaryFile, primaryFileBuf, sizeof(primaryFileBuf));
+			mirrorFileBytesRead = FileRead(mirrorFile, mirrorFileBuf, sizeof(mirrorFileBuf));
 
-			memcpy(maskedPrimaryBuf, primaryFileBuf + blockno * BLCKSZ, BLCKSZ);
-			memcpy(maskedMirrorBuf, mirrorFileBuf + blockno * BLCKSZ, BLCKSZ);
+			if (primaryFileBytesRead != mirrorFileBytesRead
+				|| primaryFileBytesRead < 0)
+			{
+				match = false;
+				break;
+			}
+
+			if (primaryFileBytesRead == 0)
+				break; /* reached EOF */
+
+			mask_block(primaryFileBuf, blockno, entry->relam);
+			mask_block(mirrorFileBuf, blockno, entry->relam);
+
+			memcpy(maskedPrimaryBuf, primaryFileBuf, BLCKSZ);
+			memcpy(maskedMirrorBuf, mirrorFileBuf, BLCKSZ);
 
 			pg_md5_hash(maskedPrimaryBuf, BLCKSZ, primaryfilechecksum);
 			pg_md5_hash(maskedMirrorBuf, BLCKSZ, mirrorfilechecksum);
@@ -245,8 +237,10 @@ compare_files(char* primaryfilepath, char* mirrorfilepath, char *relfilenode, HT
 			if (strcmp(primaryfilechecksum, mirrorfilechecksum) != 0)
 			{
 				elog(WARNING, "%s relfilenode %s blockno %d is mismatched",
-					 relam_to_string(entry->relam), relfilenode, blockno);
-				return false;
+					 get_relation_type_data(entry->relam, entry->relstorage, entry->relkind).name,
+					 relfilenode, blockno);
+				match = false;
+				break;
 			}
 
 			blockno += 1;
@@ -254,9 +248,13 @@ compare_files(char* primaryfilepath, char* mirrorfilepath, char *relfilenode, HT
 	}
 	else
 	{
-		elog(WARNING, "skipping compare somehow... %s", relfilenode);
+		elog(WARNING, "skipping compare somehow on %s", relfilenode);
 	}
-	return true;
+
+	FileClose(primaryFile);
+	FileClose(mirrorFile);
+
+	return match;
 }
 
 static void
@@ -373,11 +371,10 @@ HTAB* get_relfilenode_map()
 			&& classtuple->relkind != RELKIND_RELATION
 			&& classtuple->relkind != RELKIND_SEQUENCE)
 			|| (classtuple->relstorage != RELSTORAGE_HEAP
-				&& classtuple->relstorage != RELSTORAGE_AOROWS
-				&& classtuple->relstorage != RELSTORAGE_AOCOLS))
+				&& !relstorage_is_ao(classtuple->relstorage)))
 			continue;
 
-		if (!check_relation_type[get_relation_type(classtuple->relam, classtuple->relstorage, classtuple->relkind)])
+		if (!get_relation_type_data(classtuple->relam, classtuple->relstorage, classtuple->relkind).include)
 			continue;
 
 		relfilenodeentry *rent;
@@ -385,6 +382,7 @@ HTAB* get_relfilenode_map()
 		rent = hash_search(relfilenodemap, (void *)&rnode, HASH_ENTER, NULL);
 		rent->relfilenode = classtuple->relfilenode;
 		rent->relam = classtuple->relam;
+		rent->relkind = classtuple->relkind;
 		rent->relstorage = classtuple->relstorage;
 	}
 	heap_endscan(scan);
@@ -416,7 +414,7 @@ gp_replica_check(PG_FUNCTION_ARGS)
 
 	primaryfileshash = hash_create("primary files hash table", 50000, &primaryfiles, hash_flags);
 
-	init_check_relation_type(TextDatumGetCString(PG_GETARG_DATUM(2)));
+	init_relation_types(TextDatumGetCString(PG_GETARG_DATUM(2)));
 
 	/* Verify LSN values are correct through pg_stat_replication */
 	if (!check_walsender_synced())
@@ -440,11 +438,11 @@ gp_replica_check(PG_FUNCTION_ARGS)
 		sprintf(primaryfilename, "%s/%s", primarydirpath, dent->d_name);
 		sprintf(mirrorfilename, "%s/%s", mirrordirpath, dent->d_name);
 
-		char *d_name_copy = strdup(dent->d_name);
+		char *d_name_copy = pstrdup(dent->d_name);
 		char *relfilenode = strtok(d_name_copy, ".");
 		bool include_found;
 
-		int rnode = atoi(relfilenode);
+		int rnode = atooid(relfilenode);
 		hash_search(relfilenode_map, (void *)&rnode, HASH_FIND, &include_found);
 		if (!include_found || d_name_copy == NULL)
 			continue;
@@ -470,11 +468,11 @@ gp_replica_check(PG_FUNCTION_ARGS)
 			|| strncmp(dent->d_name, ".", 1) == 0)
 			continue;
 
-		char *d_name_copy = strdup(dent->d_name);
+		char *d_name_copy = pstrdup(dent->d_name);
 		char *relfilenode = strtok(d_name_copy, ".");
 		bool include_found;
 
-		int rnode = atoi(relfilenode);
+		int rnode = atooid(relfilenode);
 		hash_search(relfilenode_map, (void *)&rnode, HASH_FIND, &include_found);
 		if (!include_found || d_name_copy == NULL)
 			continue;
