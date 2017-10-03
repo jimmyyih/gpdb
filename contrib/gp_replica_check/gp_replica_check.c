@@ -124,15 +124,15 @@ get_relation_type(int relam, char relstorage, int relkind)
 		case BITMAP_AM_OID:
 			return 4;
 		default:
-			if (relstorage == 'h')
+			if (relstorage == RELSTORAGE_HEAP)
 				if (relkind == RELKIND_SEQUENCE)
 					return 7;
 				else
 					return 5;
-			else if (relstorage == 'a')
+			else if (relstorage_is_ao(relstorage))
 				return 6;
 			else
-				elog(ERROR, "bad relam or relstorage");
+				elog(ERROR, "bad relam or relstorage %d %c", relam, relstorage);
 	}
 }
 
@@ -218,8 +218,9 @@ compare_files(char* primaryfilepath, char* mirrorfilepath, char *relfilenode, HT
 		return true;
 
 	int rnode = atoi(relfilenode);
-	relfilenodeentry *entry = (relfilenodeentry *)hash_search(relfilenode_map, (void *)&rnode, HASH_FIND, NULL);
-	if (entry->relstorage == 'a')
+	bool found = false;
+	relfilenodeentry *entry = (relfilenodeentry *)hash_search(relfilenode_map, (void *)&rnode, HASH_FIND, &found);
+	if (relstorage_is_ao(entry->relstorage))
 	{
 		/*
 		 * We do not expect the AO files to ever have more data on the primary
@@ -253,7 +254,7 @@ compare_files(char* primaryfilepath, char* mirrorfilepath, char *relfilenode, HT
 	}
 	else
 	{
-		elog(WARNING, "skipping compare somehow...");
+		elog(WARNING, "skipping compare somehow... %s", relfilenode);
 	}
 	return true;
 }
@@ -357,7 +358,7 @@ HTAB* get_relfilenode_map()
 	int hash_flags;
 	MemSet(&relfilenodectl, 0, sizeof(relfilenodectl));
 	relfilenodectl.keysize = sizeof(Oid);
-	relfilenodectl.entrysize = sizeof(Oid);
+	relfilenodectl.entrysize = sizeof(relfilenodeentry);
 	relfilenodectl.hash = oid_hash;
 	hash_flags = (HASH_ELEM | HASH_FUNCTION);
 
@@ -368,20 +369,23 @@ HTAB* get_relfilenode_map()
 	while((tup = heap_getnext(scan, ForwardScanDirection)) != NULL)
 	{
 		Form_pg_class classtuple = (Form_pg_class) GETSTRUCT(tup);
-
-		if (classtuple->relkind != RELKIND_INDEX
-			|| classtuple->relkind != RELKIND_RELATION
-			|| classtuple->relkind != RELKIND_SEQUENCE)
+		if ((classtuple->relkind != RELKIND_INDEX
+			&& classtuple->relkind != RELKIND_RELATION
+			&& classtuple->relkind != RELKIND_SEQUENCE)
+			|| (classtuple->relstorage != RELSTORAGE_HEAP
+				&& classtuple->relstorage != RELSTORAGE_AOROWS
+				&& classtuple->relstorage != RELSTORAGE_AOCOLS))
 			continue;
 
 		if (!check_relation_type[get_relation_type(classtuple->relam, classtuple->relstorage, classtuple->relkind)])
 			continue;
 
-		relfilenodeentry *rent = (relfilenodeentry *)palloc(sizeof(relfilenodeentry));
+		relfilenodeentry *rent;
+		int rnode = classtuple->relfilenode;
+		rent = hash_search(relfilenodemap, (void *)&rnode, HASH_ENTER, NULL);
 		rent->relfilenode = classtuple->relfilenode;
 		rent->relam = classtuple->relam;
 		rent->relstorage = classtuple->relstorage;
-		hash_search(relfilenodemap, rent, HASH_ENTER, NULL);
 	}
 	heap_endscan(scan);
 	heap_close(pg_class, AccessShareLock);
@@ -438,11 +442,11 @@ gp_replica_check(PG_FUNCTION_ARGS)
 
 		char *d_name_copy = strdup(dent->d_name);
 		char *relfilenode = strtok(d_name_copy, ".");
-		bool found;
+		bool include_found;
 
 		int rnode = atoi(relfilenode);
-		hash_search(relfilenode_map, (void *)&rnode, HASH_FIND, &found);
-		if (!found || d_name_copy == NULL)
+		hash_search(relfilenode_map, (void *)&rnode, HASH_FIND, &include_found);
+		if (!include_found || d_name_copy == NULL)
 			continue;
 
 		file_eq = compare_files(primaryfilename, mirrorfilename, relfilenode, relfilenode_map);
@@ -464,6 +468,15 @@ gp_replica_check(PG_FUNCTION_ARGS)
 	{
 		if (strncmp(dent->d_name, "pg", 2) == 0
 			|| strncmp(dent->d_name, ".", 1) == 0)
+			continue;
+
+		char *d_name_copy = strdup(dent->d_name);
+		char *relfilenode = strtok(d_name_copy, ".");
+		bool include_found;
+
+		int rnode = atoi(relfilenode);
+		hash_search(relfilenode_map, (void *)&rnode, HASH_FIND, &include_found);
+		if (!include_found || d_name_copy == NULL)
 			continue;
 
 		hash_search(primaryfileshash, dent->d_name, HASH_FIND, &found);

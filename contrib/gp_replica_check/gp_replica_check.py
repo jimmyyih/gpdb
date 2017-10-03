@@ -6,17 +6,19 @@ gp_replica_check
 Tool to validate replication
 '''
 
+import sys
 import subprocess
 import threading
 
 class ReplicaCheck(threading.Thread):
-    def __init__(self, row):
+    def __init__(self, row, include_types):
         super(ReplicaCheck, self).__init__()
         self.host = row[0]
         self.port = row[1]
         self.datname = row[5]
         self.ploc = row[6]
         self.mloc = row[7]
+        self.include_types = include_types;
 
     def __str__(self):
         return 'Host: %s, Port: %s, Database: %s\n\
@@ -26,7 +28,7 @@ Mirror Filespace Location: %s' % (self.host, self.port, self.datname,
 
     def run(self):
         print(self)
-        cmd = '''PGOPTIONS='-c gp_session_role=utility' psql -h %s -p %s -c "select * from gp_replica_check('%s', '%s', 'all')" %s''' % (self.host, self.port, self.ploc, self.mloc, self.datname)
+        cmd = '''PGOPTIONS='-c gp_session_role=utility' psql -h %s -p %s -c "select * from gp_replica_check('%s', '%s', '%s')" %s''' % (self.host, self.port, self.ploc, self.mloc, self.include_types, self.datname)
         res = subprocess.check_output(cmd, stderr=subprocess.STDOUT, shell=True)
         print res
 
@@ -64,7 +66,7 @@ WHERE fep.fsedbid = gscp.dbid
     for ai in a:
         aj = map(str.strip, ai.split('|'))
         if len(aj) > 1:
-            fsmap.setdefault(aj[2], []).append(ReplicaCheck(aj))
+            fsmap.setdefault(aj[2], []).append(aj)
 
     return fsmap
 
@@ -87,14 +89,23 @@ def run_checkpoint():
     a = subprocess.check_output('psql postgres -t -c "%s"' % sql, stderr=subprocess.STDOUT, shell=True)
     print a
 
-def start_verification(fsmap):
+def start_verification(fsmap, include_types):
     for content, fsinfo_list in fsmap.items():
         for fsinfo in fsinfo_list:
-            fsinfo.start()
-            fsinfo.join()
+            replica_check = ReplicaCheck(fsinfo, include_types)
+            replica_check.start()
+            replica_check.join()
 
 if __name__ == '__main__':
+    if len(sys.argv) > 2:
+        print 'Usage: gp_replica_check.py [include_list]'
+        sys.exit(1)
+
+    include_types = 'all'
+    if len(sys.argv) == 2:
+        include_types = sys.argv[1]
+
     install_extension()
     run_checkpoint()
     fsmap = get_fsmap()
-    start_verification(fsmap)
+    start_verification(fsmap, include_types)
