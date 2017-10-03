@@ -26,7 +26,7 @@ Mirror Filespace Location: %s' % (self.host, self.port, self.datname,
 
     def run(self):
         print(self)
-        cmd = '''PGOPTIONS='-c gp_session_role=utility' psql -h %s -p %s -c "select * from gp_replica_check('%s', '%s')" %s''' % (self.host, self.port, self.ploc, self.mloc, self.datname)
+        cmd = '''PGOPTIONS='-c gp_session_role=utility' psql -h %s -p %s -c "select * from gp_replica_check('%s', '%s', 'all')" %s''' % (self.host, self.port, self.ploc, self.mloc, self.datname)
         res = subprocess.check_output(cmd, stderr=subprocess.STDOUT, shell=True)
         print res
 

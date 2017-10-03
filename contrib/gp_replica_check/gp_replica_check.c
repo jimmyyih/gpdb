@@ -15,6 +15,13 @@ PG_MODULE_MAGIC;
 
 extern Datum gp_replica_check(PG_FUNCTION_ARGS);
 
+typedef struct relfilenodentry
+{
+	Oid relfilenode;
+	int relam;
+	char relstorage;
+} relfilenodeentry;
+
 typedef struct WalSenderInfo
 {
 	XLogRecPtr sent;
@@ -24,15 +31,110 @@ typedef struct WalSenderInfo
 	WalSndState state;
 } WalSenderInfo;
 
+static void init_check_relation_type(char *newval);
+static int get_relation_type(int relam, char relstorage, int relkind);
 static char* relam_to_string(Oid relam);
 static void mask_block(char *pagedata, BlockNumber blkno, Oid relam);
-static bool compare_files(char* primaryfilepath, char* mirrorfilepath, char *relfilenode);
+static bool compare_files(char* primaryfilepath, char* mirrorfilepath, char *relfilenode, HTAB *relfilenode_map);
 static void get_replication_info(WalSenderInfo **walsndinfo);
 static bool check_walsender_synced();
 static XLogRecPtr* get_last_sent_lsn();
 static bool compare_last_sent_lsns(XLogRecPtr *start_sent_lsns, XLogRecPtr *end_sent_lsns);
 
 #define SLRU_PAGES_PER_SEGMENT 32
+
+static bool check_relation_type[8];
+
+static void
+init_check_relation_type(char *newval)
+{
+	List *elemlist;
+	ListCell *l;
+
+	/* Initialize the array */
+	MemSet(check_relation_type, 0, sizeof(check_relation_type) * sizeof(bool));
+
+	/* Parse string into list of identifiers */
+	if (!SplitIdentifierString(newval, ',', &elemlist))
+	{
+		list_free(elemlist);
+
+		/* syntax error in list */
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("List syntax is invalid.")));
+	}
+
+	foreach(l, elemlist)
+	{
+		char *tok = (char *) lfirst(l);
+		int type;
+
+		/* Check for 'all'. */
+		if (pg_strcasecmp(tok, "all") == 0)
+		{
+			for (type = 0; type < sizeof(check_relation_type); type++)
+					check_relation_type[type] = true;
+		}
+		else
+		{
+			if (pg_strcasecmp(tok, "btree") == 0)
+				check_relation_type[0] = true;
+			else if (pg_strcasecmp(tok, "hash") == 0)
+				check_relation_type[1] = true;
+			else if (pg_strcasecmp(tok, "gist") == 0)
+				check_relation_type[2] = true;
+			else if (pg_strcasecmp(tok, "gin") == 0)
+				check_relation_type[3] = true;
+			else if (pg_strcasecmp(tok, "bitmap") == 0)
+				check_relation_type[4] = true;
+			else if (pg_strcasecmp(tok, "heap") == 0)
+				check_relation_type[5] = true;
+			else if (pg_strcasecmp(tok, "ao") == 0)
+				check_relation_type[6] = true;
+			else if (pg_strcasecmp(tok, "sequence") == 0)
+				check_relation_type[7] = true;
+			else
+			{
+				list_free(elemlist);
+				ereport(ERROR,
+						(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						 errmsg("Unrecognized key word: \"%s\".", tok)));
+			}
+
+		}
+	}
+
+	list_free(elemlist);
+}
+
+static int
+get_relation_type(int relam, char relstorage, int relkind)
+{
+	switch(relam)
+	{
+		case BTREE_AM_OID:
+			return 0;
+		case HASH_AM_OID:
+			return 1;
+		case GIST_AM_OID:
+			return 2;
+		case GIN_AM_OID:
+			return 3;
+		case BITMAP_AM_OID:
+			return 4;
+		default:
+			if (relstorage == 'h')
+				if (relkind == RELKIND_SEQUENCE)
+					return 7;
+				else
+					return 5;
+			else if (relstorage == 'a')
+				return 6;
+			else
+				elog(ERROR, "bad relam or relstorage");
+	}
+}
 
 static char*
 relam_to_string(Oid relam)
@@ -79,17 +181,19 @@ mask_block(char *pagedata, BlockNumber blockno, Oid relam)
 }
 
 static bool
-compare_files(char* primaryfilepath, char* mirrorfilepath, char *relfilenode)
+compare_files(char* primaryfilepath, char* mirrorfilepath, char *relfilenode, HTAB *relfilenode_map)
 {
 	File primaryFile = 0;
 	File mirrorFile = 0;
 	char primaryFileBuf[BLCKSZ * SLRU_PAGES_PER_SEGMENT];
 	char mirrorFileBuf[BLCKSZ * SLRU_PAGES_PER_SEGMENT];
-	int primaryFileBytesRead;
-	int mirrorFileBytesRead;
-
 	char primaryfilechecksum[SLRU_MD5_BUFLEN] = {0};
 	char mirrorfilechecksum[SLRU_MD5_BUFLEN] = {0};
+	char maskedPrimaryBuf[BLCKSZ];
+	char maskedMirrorBuf[BLCKSZ];
+	int primaryFileBytesRead;
+	int mirrorFileBytesRead;
+	int blockno = 0;
 
 	primaryFile = PathNameOpenFile(primaryfilepath, O_RDONLY | PG_BINARY, S_IRUSR);
 	if (primaryFile < 0)
@@ -113,41 +217,9 @@ compare_files(char* primaryfilepath, char* mirrorfilepath, char *relfilenode)
  	if (strcmp(primaryfilechecksum, mirrorfilechecksum) == 0)
 		return true;
 
-	char maskedPrimaryBuf[BLCKSZ];
-	char maskedMirrorBuf[BLCKSZ];
-	int blockno = 0;
-
-	/* Check the type of object */
-	Relation pg_class = heap_open(RelationRelationId, AccessShareLock);
-	HeapScanDesc scan = heap_beginscan(pg_class, SnapshotNow, 0, NULL);
-	HeapTuple tup = NULL;
-	char relstorage = 0;
-	Oid relam;
-	while((tup = heap_getnext(scan, ForwardScanDirection)) != NULL)
-	{
-		Form_pg_class classtuple = (Form_pg_class) GETSTRUCT(tup);
-
-		if (classtuple->relfilenode != atoi(relfilenode)) /* change to strtoul later */
-			continue;
-
-		if (classtuple->relkind == RELKIND_INDEX)
-			relam = classtuple->relam;
-		else if (classtuple->relkind == RELKIND_RELATION)
-			relam = 0;
-
-		relstorage = classtuple->relstorage;
-		break;
-	}
-	heap_endscan(scan);
-	heap_close(pg_class, AccessShareLock);
-
-	if (!relstorage)
-	{
-		elog(WARNING, "Invalid relstorage for %s", relfilenode);
-		return false;
-	}
-
-	if (relstorage == 'a')
+	int rnode = atoi(relfilenode);
+	relfilenodeentry *entry = (relfilenodeentry *)hash_search(relfilenode_map, (void *)&rnode, HASH_FIND, NULL);
+	if (entry->relstorage == 'a')
 	{
 		/*
 		 * We do not expect the AO files to ever have more data on the primary
@@ -156,12 +228,12 @@ compare_files(char* primaryfilepath, char* mirrorfilepath, char *relfilenode)
 		elog(WARNING, "Skipping AO file block check");
 		return false;
 	}
-	else if (relstorage == 'h')
+	else if (entry->relstorage == 'h')
 	{
 		while (blockno * BLCKSZ < primaryFileBytesRead)
 		{
-			mask_block(primaryFileBuf + blockno * BLCKSZ, blockno, relam);
-			mask_block(mirrorFileBuf + blockno * BLCKSZ, blockno, relam);
+			mask_block(primaryFileBuf + blockno * BLCKSZ, blockno, entry->relam);
+			mask_block(mirrorFileBuf + blockno * BLCKSZ, blockno, entry->relam);
 
 			memcpy(maskedPrimaryBuf, primaryFileBuf + blockno * BLCKSZ, BLCKSZ);
 			memcpy(maskedMirrorBuf, mirrorFileBuf + blockno * BLCKSZ, BLCKSZ);
@@ -172,14 +244,17 @@ compare_files(char* primaryfilepath, char* mirrorfilepath, char *relfilenode)
 			if (strcmp(primaryfilechecksum, mirrorfilechecksum) != 0)
 			{
 				elog(WARNING, "%s relfilenode %s blockno %d is mismatched",
-					 relam_to_string(relam), relfilenode, blockno);
+					 relam_to_string(entry->relam), relfilenode, blockno);
 				return false;
 			}
 
 			blockno += 1;
 		}
 	}
-
+	else
+	{
+		elog(WARNING, "skipping compare somehow...");
+	}
 	return true;
 }
 
@@ -270,6 +345,50 @@ compare_last_sent_lsns(XLogRecPtr *start_sent_lsns, XLogRecPtr *end_sent_lsns)
 	return true;
 }
 
+static
+HTAB* get_relfilenode_map()
+{
+	Relation pg_class;
+	HeapScanDesc scan;
+	HeapTuple tup = NULL;
+
+	HTAB *relfilenodemap;
+	HASHCTL relfilenodectl;
+	int hash_flags;
+	MemSet(&relfilenodectl, 0, sizeof(relfilenodectl));
+	relfilenodectl.keysize = sizeof(Oid);
+	relfilenodectl.entrysize = sizeof(Oid);
+	relfilenodectl.hash = oid_hash;
+	hash_flags = (HASH_ELEM | HASH_FUNCTION);
+
+	relfilenodemap = hash_create("relfilenode map", 50000, &relfilenodectl, hash_flags);
+
+	pg_class = heap_open(RelationRelationId, AccessShareLock);
+	scan = heap_beginscan(pg_class, SnapshotNow, 0, NULL);
+	while((tup = heap_getnext(scan, ForwardScanDirection)) != NULL)
+	{
+		Form_pg_class classtuple = (Form_pg_class) GETSTRUCT(tup);
+
+		if (classtuple->relkind != RELKIND_INDEX
+			|| classtuple->relkind != RELKIND_RELATION
+			|| classtuple->relkind != RELKIND_SEQUENCE)
+			continue;
+
+		if (!check_relation_type[get_relation_type(classtuple->relam, classtuple->relstorage, classtuple->relkind)])
+			continue;
+
+		relfilenodeentry *rent = (relfilenodeentry *)palloc(sizeof(relfilenodeentry));
+		rent->relfilenode = classtuple->relfilenode;
+		rent->relam = classtuple->relam;
+		rent->relstorage = classtuple->relstorage;
+		hash_search(relfilenodemap, rent, HASH_ENTER, NULL);
+	}
+	heap_endscan(scan);
+	heap_close(pg_class, AccessShareLock);
+
+	return relfilenodemap;
+}
+
 PG_FUNCTION_INFO_V1(gp_replica_check);
 
 Datum
@@ -293,12 +412,16 @@ gp_replica_check(PG_FUNCTION_ARGS)
 
 	primaryfileshash = hash_create("primary files hash table", 50000, &primaryfiles, hash_flags);
 
+	init_check_relation_type(TextDatumGetCString(PG_GETARG_DATUM(2)));
+
 	/* Verify LSN values are correct through pg_stat_replication */
 	if (!check_walsender_synced())
 		PG_RETURN_BOOL(false);
 
 	/* Store the last commit to compare at the end */
 	XLogRecPtr *start_sent_lsns = get_last_sent_lsn();
+
+	HTAB *relfilenode_map = get_relfilenode_map();
 
 	while ((dent = ReadDir(primarydir, primarydirpath)) != NULL)
 	{
@@ -313,7 +436,16 @@ gp_replica_check(PG_FUNCTION_ARGS)
 		sprintf(primaryfilename, "%s/%s", primarydirpath, dent->d_name);
 		sprintf(mirrorfilename, "%s/%s", mirrordirpath, dent->d_name);
 
-		file_eq = compare_files(primaryfilename, mirrorfilename, dent->d_name);
+		char *d_name_copy = strdup(dent->d_name);
+		char *relfilenode = strtok(d_name_copy, ".");
+		bool found;
+
+		int rnode = atoi(relfilenode);
+		hash_search(relfilenode_map, (void *)&rnode, HASH_FIND, &found);
+		if (!found || d_name_copy == NULL)
+			continue;
+
+		file_eq = compare_files(primaryfilename, mirrorfilename, relfilenode, relfilenode_map);
 
 		if (!file_eq)
 			elog(WARNING, "Files %s and %s differ", primaryfilename, mirrorfilename);
@@ -321,8 +453,7 @@ gp_replica_check(PG_FUNCTION_ARGS)
 		dir_equal = dir_equal && file_eq;
 
 		/* Store each filename for fileset comparison later */
-		bool found;
-		hash_search(primaryfileshash, dent->d_name, HASH_ENTER, &found);
+		hash_search(primaryfileshash, dent->d_name, HASH_ENTER, NULL);
 	}
 
 	FreeDir(primarydir);
