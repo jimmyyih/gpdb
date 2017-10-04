@@ -14,18 +14,17 @@ PG_MODULE_MAGIC;
 
 extern Datum gp_replica_check(PG_FUNCTION_ARGS);
 
-typedef struct relfilenodentry
+typedef struct RelfilenodeEntry
 {
 	Oid relfilenode;
 	int relam;
 	int relkind;
 	char relstorage;
-} relfilenodeentry;
+} RelfilenodeEntry;
 
 typedef struct WalSenderInfo
 {
 	XLogRecPtr sent;
-	XLogRecPtr write;
 	XLogRecPtr flush;
 	XLogRecPtr apply;
 	WalSndState state;
@@ -178,12 +177,10 @@ compare_files(char* primaryfilepath, char* mirrorfilepath, char *relfilenode, HT
 	char mirrorFileBuf[BLCKSZ];
 	char primaryfilechecksum[MD5_BUFLEN] = {0};
 	char mirrorfilechecksum[MD5_BUFLEN] = {0};
-	char maskedPrimaryBuf[BLCKSZ];
-	char maskedMirrorBuf[BLCKSZ];
 	int primaryFileBytesRead;
 	int mirrorFileBytesRead;
 	int blockno = 0;
-	bool match = true;
+	bool match = false;
 
 	primaryFile = PathNameOpenFile(primaryfilepath, O_RDONLY | PG_BINARY, S_IRUSR);
 	if (primaryFile < 0)
@@ -198,57 +195,46 @@ compare_files(char* primaryfilepath, char* mirrorfilepath, char *relfilenode, HT
 
 	int rnode = atooid(relfilenode);
 	bool found = false;
-	relfilenodeentry *entry = (relfilenodeentry *)hash_search(relfilenode_map, (void *)&rnode, HASH_FIND, &found);
-	if (relstorage_is_ao(entry->relstorage))
+	RelfilenodeEntry *entry = (RelfilenodeEntry *)hash_search(relfilenode_map, (void *)&rnode, HASH_FIND, &found);
+
+	while (true)
 	{
-		/*
-		 * We do not expect the AO files to ever have more data on the primary
-		 * than on the mirror so the above md5 checksum checks should suffice.
-		 */
-		elog(WARNING, "Skipping AO file block check");
-		match = false;
-	}
-	else if (entry->relstorage == 'h')
-	{
-		while (true)
+		primaryFileBytesRead = FileRead(primaryFile, primaryFileBuf, sizeof(primaryFileBuf));
+		mirrorFileBytesRead = FileRead(mirrorFile, mirrorFileBuf, sizeof(mirrorFileBuf));
+
+		if (primaryFileBytesRead != mirrorFileBytesRead
+			|| primaryFileBytesRead < 0)
 		{
-			primaryFileBytesRead = FileRead(primaryFile, primaryFileBuf, sizeof(primaryFileBuf));
-			mirrorFileBytesRead = FileRead(mirrorFile, mirrorFileBuf, sizeof(mirrorFileBuf));
+			elog(WARNING, "%s relfilenode %s blockno %d is mismatched",
+				 get_relation_type_data(entry->relam, entry->relstorage, entry->relkind).name,
+				 relfilenode, blockno);
+			break;
+		}
 
-			if (primaryFileBytesRead != mirrorFileBytesRead
-				|| primaryFileBytesRead < 0)
-			{
-				match = false;
-				break;
-			}
+		if (primaryFileBytesRead == 0)
+		{
+			match = true;
+			break; /* reached EOF */
+		}
 
-			if (primaryFileBytesRead == 0)
-				break; /* reached EOF */
-
+		if (entry->relstorage == RELSTORAGE_HEAP)
+		{
 			mask_block(primaryFileBuf, blockno, entry->relam);
 			mask_block(mirrorFileBuf, blockno, entry->relam);
-
-			memcpy(maskedPrimaryBuf, primaryFileBuf, BLCKSZ);
-			memcpy(maskedMirrorBuf, mirrorFileBuf, BLCKSZ);
-
-			pg_md5_hash(maskedPrimaryBuf, BLCKSZ, primaryfilechecksum);
-			pg_md5_hash(maskedMirrorBuf, BLCKSZ, mirrorfilechecksum);
-
-			if (strcmp(primaryfilechecksum, mirrorfilechecksum) != 0)
-			{
-				elog(WARNING, "%s relfilenode %s blockno %d is mismatched",
-					 get_relation_type_data(entry->relam, entry->relstorage, entry->relkind).name,
-					 relfilenode, blockno);
-				match = false;
-				break;
-			}
-
-			blockno += 1;
 		}
-	}
-	else
-	{
-		elog(WARNING, "skipping compare somehow on %s", relfilenode);
+
+		pg_md5_hash(maskedPrimaryBuf, BLCKSZ, primaryfilechecksum);
+		pg_md5_hash(maskedMirrorBuf, BLCKSZ, mirrorfilechecksum);
+
+		if (strcmp(primaryfilechecksum, mirrorfilechecksum) != 0)
+		{
+			elog(WARNING, "%s relfilenode %s blockno %d is mismatched",
+				 get_relation_type_data(entry->relam, entry->relstorage, entry->relkind).name,
+				 relfilenode, blockno);
+			break;
+		}
+
+		blockno++;
 	}
 
 	FileClose(primaryFile);
@@ -271,7 +257,6 @@ get_replication_info(WalSenderInfo **walsndinfo)
 		{
 			walsndinfo[i] = (WalSenderInfo *)palloc(sizeof(WalSenderInfo));
 			walsndinfo[i]->sent = walsnd->sentPtr;
-			walsndinfo[i]->write = walsnd->write;
 			walsndinfo[i]->flush = walsnd->flush;
 			walsndinfo[i]->apply = walsnd->apply;
 			walsndinfo[i]->state = walsnd->state;
@@ -344,8 +329,8 @@ compare_last_sent_lsns(XLogRecPtr *start_sent_lsns, XLogRecPtr *end_sent_lsns)
 	return true;
 }
 
-static
-HTAB* get_relfilenode_map()
+static HTAB*
+get_relfilenode_map()
 {
 	Relation pg_class;
 	HeapScanDesc scan;
@@ -356,7 +341,7 @@ HTAB* get_relfilenode_map()
 	int hash_flags;
 	MemSet(&relfilenodectl, 0, sizeof(relfilenodectl));
 	relfilenodectl.keysize = sizeof(Oid);
-	relfilenodectl.entrysize = sizeof(relfilenodeentry);
+	relfilenodectl.entrysize = sizeof(RelfilenodeEntry);
 	relfilenodectl.hash = oid_hash;
 	hash_flags = (HASH_ELEM | HASH_FUNCTION);
 
@@ -377,7 +362,7 @@ HTAB* get_relfilenode_map()
 		if (!get_relation_type_data(classtuple->relam, classtuple->relstorage, classtuple->relkind).include)
 			continue;
 
-		relfilenodeentry *rent;
+		RelfilenodeEntry *rent;
 		int rnode = classtuple->relfilenode;
 		rent = hash_search(relfilenodemap, (void *)&rnode, HASH_ENTER, NULL);
 		rent->relfilenode = classtuple->relfilenode;
@@ -391,6 +376,22 @@ HTAB* get_relfilenode_map()
 	return relfilenodemap;
 }
 
+static HTAB*
+init_primary_file_set()
+{
+	HTAB *primary_file_set;
+	HASHCTL primary_file_ctl;
+	int hash_flags;
+
+	MemSet(&primary_file_ctl, 0, sizeof(primary_file_ctl));
+	primary_file_ctl.keysize = MAXPGPATH;
+	primary_file_ctl.entrysize = MAXPGPATH;
+	primary_file_ctl.hash = string_hash;
+	hash_flags = (HASH_ELEM | HASH_FUNCTION);
+
+	return hash_create("primary files set", 50000, &primary_file_ctl, hash_flags);
+}
+
 PG_FUNCTION_INFO_V1(gp_replica_check);
 
 Datum
@@ -398,21 +399,8 @@ gp_replica_check(PG_FUNCTION_ARGS)
 {
 	char *primarydirpath = TextDatumGetCString(PG_GETARG_DATUM(0));
 	char *mirrordirpath = TextDatumGetCString(PG_GETARG_DATUM(1));
-	DIR *primarydir = AllocateDir(primarydirpath);
-	DIR *mirrordir = AllocateDir(mirrordirpath);
 	struct dirent *dent = NULL;
 	bool dir_equal = true;
-
-	HTAB *primaryfileshash;
-	HASHCTL primaryfiles;
-	int hash_flags;
-	MemSet(&primaryfiles, 0, sizeof(primaryfiles));
-	primaryfiles.keysize = MAXPGPATH;
-	primaryfiles.entrysize = MAXPGPATH;
-	primaryfiles.hash = string_hash;
-	hash_flags = (HASH_ELEM | HASH_FUNCTION);
-
-	primaryfileshash = hash_create("primary files hash table", 50000, &primaryfiles, hash_flags);
 
 	init_relation_types(TextDatumGetCString(PG_GETARG_DATUM(2)));
 
@@ -420,10 +408,14 @@ gp_replica_check(PG_FUNCTION_ARGS)
 	if (!check_walsender_synced())
 		PG_RETURN_BOOL(false);
 
+	DIR *primarydir = AllocateDir(primarydirpath);
+	DIR *mirrordir = AllocateDir(mirrordirpath);
+
 	/* Store the last commit to compare at the end */
 	XLogRecPtr *start_sent_lsns = get_last_sent_lsn();
 
 	HTAB *relfilenode_map = get_relfilenode_map();
+	HTAB *primary_file_set = init_primary_file_set();
 
 	while ((dent = ReadDir(primarydir, primarydirpath)) != NULL)
 	{
@@ -455,7 +447,7 @@ gp_replica_check(PG_FUNCTION_ARGS)
 		dir_equal = dir_equal && file_eq;
 
 		/* Store each filename for fileset comparison later */
-		hash_search(primaryfileshash, dent->d_name, HASH_ENTER, NULL);
+		hash_search(primary_file_set, dent->d_name, HASH_ENTER, NULL);
 	}
 
 	FreeDir(primarydir);
@@ -477,7 +469,7 @@ gp_replica_check(PG_FUNCTION_ARGS)
 		if (!include_found || d_name_copy == NULL)
 			continue;
 
-		hash_search(primaryfileshash, dent->d_name, HASH_FIND, &found);
+		hash_search(primary_file_set, dent->d_name, HASH_FIND, &found);
 		if (!found)
 			elog(WARNING, "Found extra file on mirror: %s/%s", mirrordirpath, dent->d_name);
 	}
@@ -491,6 +483,9 @@ gp_replica_check(PG_FUNCTION_ARGS)
 		elog(WARNING, "IO may have been performed during the check. Results may not be correct.");
 		PG_RETURN_BOOL(false);
 	}
+
+	hash_destroy(relfilenode_map);
+	hash_destroy(primary_file_set);
 
 	PG_RETURN_BOOL(dir_equal);
 }
