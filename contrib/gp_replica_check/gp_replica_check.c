@@ -10,6 +10,10 @@
 #include "utils/builtins.h"
 #include "utils/hsearch.h"
 
+#define atooid(x) ((Oid) strtoul((x), NULL, 10))
+#define MD5_BUFLEN 33 /* MD5 is 32 bytes + 1 null-terminator */
+#define MAX_INCLUDE_RELATION_TYPES 8
+
 PG_MODULE_MAGIC;
 
 extern Datum gp_replica_check(PG_FUNCTION_ARGS);
@@ -36,19 +40,6 @@ typedef struct RelationTypeData
 	bool include;
 } RelationTypeData;
 
-static void init_relation_types(char *include_relation_types);
-static RelationTypeData get_relation_type_data(int relam, char relstorage, int relkind);
-static void mask_block(char *pagedata, BlockNumber blkno, Oid relam);
-static bool compare_files(char* primaryfilepath, char* mirrorfilepath, char *relfilenode, HTAB *relfilenode_map);
-static void get_replication_info(WalSenderInfo **walsndinfo);
-static bool check_walsender_synced();
-static XLogRecPtr* get_last_sent_lsn();
-static bool compare_last_sent_lsns(XLogRecPtr *start_sent_lsns, XLogRecPtr *end_sent_lsns);
-
-#define atooid(x) ((Oid) strtoul((x), NULL, 10))
-#define MD5_BUFLEN 33 /* MD5 is 32 bytes + 1 null-terminator */
-#define MAX_INCLUDE_RELATION_TYPES 8
-
 static RelationTypeData relation_types[MAX_INCLUDE_RELATION_TYPES] = {
 	{"btree", false},
 	{"hash", false},
@@ -59,6 +50,15 @@ static RelationTypeData relation_types[MAX_INCLUDE_RELATION_TYPES] = {
 	{"sequence", false},
 	{"ao", false}
 };
+
+static void init_relation_types(char *include_relation_types);
+static RelationTypeData get_relation_type_data(int relam, char relstorage, int relkind);
+static void mask_block(char *pagedata, BlockNumber blkno, Oid relam);
+static bool compare_files(char* primaryfilepath, char* mirrorfilepath, char *relfilenode, HTAB *relfilenode_map);
+static void get_walsender_info(WalSenderInfo **walsndinfo);
+static bool check_walsender_synced();
+static XLogRecPtr* get_sent_lsns();
+static bool compare_sent_lsns(XLogRecPtr *start_sent_lsns, XLogRecPtr *end_sent_lsns);
 
 static void
 init_relation_types(char *include_relation_types)
@@ -223,8 +223,8 @@ compare_files(char* primaryfilepath, char* mirrorfilepath, char *relfilenode, HT
 			mask_block(mirrorFileBuf, blockno, entry->relam);
 		}
 
-		pg_md5_hash(maskedPrimaryBuf, BLCKSZ, primaryfilechecksum);
-		pg_md5_hash(maskedMirrorBuf, BLCKSZ, mirrorfilechecksum);
+		pg_md5_hash(primaryFileBuf, BLCKSZ, primaryfilechecksum);
+		pg_md5_hash(mirrorFileBuf, BLCKSZ, mirrorfilechecksum);
 
 		if (strcmp(primaryfilechecksum, mirrorfilechecksum) != 0)
 		{
@@ -244,7 +244,7 @@ compare_files(char* primaryfilepath, char* mirrorfilepath, char *relfilenode, HT
 }
 
 static void
-get_replication_info(WalSenderInfo **walsndinfo)
+get_walsender_info(WalSenderInfo **walsndinfo)
 {
 	int i;
 
@@ -280,7 +280,7 @@ check_walsender_synced()
 		synced = true;
 		memset(walsndinfo, 0, sizeof(walsndinfo));
 
-		get_replication_info(walsndinfo);
+		get_walsender_info(walsndinfo);
 		for (i = 0; i < max_wal_senders; i++)
 		{
 			synced = synced && (walsndinfo[i]->state == WALSNDSTATE_STREAMING &&
@@ -298,13 +298,13 @@ check_walsender_synced()
 }
 
 static XLogRecPtr*
-get_last_sent_lsn()
+get_sent_lsns()
 {
 	int i;
 	XLogRecPtr *sent_lsns;
 	WalSenderInfo *walsndinfo[max_wal_senders];
 
-	get_replication_info(walsndinfo);
+	get_walsender_info(walsndinfo);
 
 	sent_lsns = (XLogRecPtr *)palloc(max_wal_senders * sizeof(WalSenderInfo));
 	for (i = 0; i < max_wal_senders; ++i)
@@ -316,7 +316,7 @@ get_last_sent_lsn()
 }
 
 static bool
-compare_last_sent_lsns(XLogRecPtr *start_sent_lsns, XLogRecPtr *end_sent_lsns)
+compare_sent_lsns(XLogRecPtr *start_sent_lsns, XLogRecPtr *end_sent_lsns)
 {
 	int i;
 
@@ -379,7 +379,6 @@ get_relfilenode_map()
 static HTAB*
 init_primary_file_set()
 {
-	HTAB *primary_file_set;
 	HASHCTL primary_file_ctl;
 	int hash_flags;
 
@@ -402,17 +401,17 @@ gp_replica_check(PG_FUNCTION_ARGS)
 	struct dirent *dent = NULL;
 	bool dir_equal = true;
 
-	init_relation_types(TextDatumGetCString(PG_GETARG_DATUM(2)));
-
 	/* Verify LSN values are correct through pg_stat_replication */
 	if (!check_walsender_synced())
 		PG_RETURN_BOOL(false);
+
+	init_relation_types(TextDatumGetCString(PG_GETARG_DATUM(2)));
 
 	DIR *primarydir = AllocateDir(primarydirpath);
 	DIR *mirrordir = AllocateDir(mirrordirpath);
 
 	/* Store the last commit to compare at the end */
-	XLogRecPtr *start_sent_lsns = get_last_sent_lsn();
+	XLogRecPtr *start_sent_lsns = get_sent_lsns();
 
 	HTAB *relfilenode_map = get_relfilenode_map();
 	HTAB *primary_file_set = init_primary_file_set();
@@ -449,7 +448,6 @@ gp_replica_check(PG_FUNCTION_ARGS)
 		/* Store each filename for fileset comparison later */
 		hash_search(primary_file_set, dent->d_name, HASH_ENTER, NULL);
 	}
-
 	FreeDir(primarydir);
 
 	/* Open up mirrordirpath and verify each mirror file exist in the primary hash table */
@@ -474,18 +472,17 @@ gp_replica_check(PG_FUNCTION_ARGS)
 			elog(WARNING, "Found extra file on mirror: %s/%s", mirrordirpath, dent->d_name);
 	}
 	FreeDir(mirrordir);
+	hash_destroy(relfilenode_map);
+	hash_destroy(primary_file_set);
 
 	/* Compare stored last commit with now */
-	XLogRecPtr *end_sent_lsns = get_last_sent_lsn();
+	XLogRecPtr *end_sent_lsns = get_sent_lsns();
 
-	if (!compare_last_sent_lsns(start_sent_lsns, end_sent_lsns))
+	if (!compare_sent_lsns(start_sent_lsns, end_sent_lsns))
 	{
 		elog(WARNING, "IO may have been performed during the check. Results may not be correct.");
 		PG_RETURN_BOOL(false);
 	}
-
-	hash_destroy(relfilenode_map);
-	hash_destroy(primary_file_set);
 
 	PG_RETURN_BOOL(dir_equal);
 }
