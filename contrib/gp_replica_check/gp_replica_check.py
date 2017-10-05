@@ -53,7 +53,7 @@ FROM gp_segment_configuration gscp, pg_filespace_entry fep, pg_tablespace tep,
      pg_filespace pfs, pg_database pdb
 WHERE fep.fsedbid = gscp.dbid
       AND fem.fsedbid = gscm.dbid
-      AND ((tep.oid = tem.oid AND tep.oid = 1663) OR (tep.oid = 1664 AND tem.oid = 1664 AND pdb.oid = 12090))
+      AND ((tep.oid = 1663 AND tem.oid = 1663) OR (tep.oid = 1664 AND tem.oid = 1664 AND pdb.oid = 1))
       AND gscp.content = gscm.content
       AND gscp.role = 'p'
       AND gscm.role = 'm'
