@@ -6,9 +6,11 @@ gp_replica_check
 Tool to validate replication
 '''
 
+import argparse
 import sys
 import subprocess
 import threading
+import Queue
 
 class ReplicaCheck(threading.Thread):
     def __init__(self, row, include_types):
@@ -19,6 +21,7 @@ class ReplicaCheck(threading.Thread):
         self.ploc = row[6]
         self.mloc = row[7]
         self.include_types = include_types;
+        self.match = False
 
     def __str__(self):
         return 'Host: %s, Port: %s, Database: %s\n\
@@ -29,11 +32,30 @@ Mirror Filespace Location: %s' % (self.host, self.port, self.datname,
     def run(self):
         print(self)
         cmd = '''PGOPTIONS='-c gp_session_role=utility' psql -h %s -p %s -c "select * from gp_replica_check('%s', '%s', '%s')" %s''' % (self.host, self.port, self.ploc, self.mloc, self.include_types, self.datname)
-        res = subprocess.check_output(cmd, stderr=subprocess.STDOUT, shell=True)
-        print res
+        try:
+            res = subprocess.check_output(cmd, stderr=subprocess.STDOUT, shell=True)
+            print res
+            self.match = True if res.strip().split('\n')[-2].strip() == 't' else False
+        except subprocess.CalledProcessError, e:
+            print 'returncode: (%s), cmd: (%s), output: (%s)' % (e.returncode, e.cmd, e.output)
+
+def install_extension(databases):
+    get_datname_sql = ''' SELECT datname FROM pg_database WHERE datname != 'template0' '''
+    create_ext_sql = ''' CREATE EXTENSION IF NOT EXISTS gp_replica_check '''
+
+    database_list = map(str.strip, databases.split(','))
+    print "Creating gp_replica_check extension on databases if needed:"
+    datnames = subprocess.check_output('psql postgres -t -c "%s"' % get_datname_sql, stderr=subprocess.STDOUT, shell=True).split('\n')
+    for datname in datnames:
+        if len(datname) > 1 and datname.strip() in database_list:
+            print subprocess.check_output('psql %s -t -c "%s"' % (datname.strip(), create_ext_sql), stderr=subprocess.STDOUT, shell=True)
+
+def run_checkpoint():
+    print "Calling checkpoint:"
+    print subprocess.check_output('psql postgres -t -c "CHECKPOINT"', stderr=subprocess.STDOUT, shell=True)
 
 def get_fsmap():
-    sql = '''
+    fslist_sql = '''
 SELECT gscp.address,
        gscp.port,
        gscp.content,
@@ -62,50 +84,42 @@ WHERE fep.fsedbid = gscp.dbid
 '''
 
     fsmap = {}
-    a = subprocess.check_output('psql postgres -t -c "%s"' % sql, stderr=subprocess.STDOUT, shell=True).split('\n')
-    for ai in a:
-        aj = map(str.strip, ai.split('|'))
-        if len(aj) > 1:
-            fsmap.setdefault(aj[2], []).append(aj)
+    fslist = subprocess.check_output('psql postgres -t -c "%s"' % fslist_sql, stderr=subprocess.STDOUT, shell=True).split('\n')
+    for fsrow in fslist:
+        fselements = map(str.strip, fsrow.split('|'))
+        if len(fselements) > 1:
+            fsmap.setdefault(fselements[2], []).append(fselements)
 
     return fsmap
 
-def install_extension():
-    sql = '''
-SELECT datname FROM pg_database WHERE datname != 'template0'
-'''
-    sql2 = '''
-CREATE EXTENSION IF NOT EXISTS gp_replica_check
-'''
-
-    a = subprocess.check_output('psql postgres -t -c "%s"' % sql, stderr=subprocess.STDOUT, shell=True).split('\n')
-    for ai in a:
-        if len(ai) > 1:
-            b = subprocess.check_output('psql %s -t -c "%s"' % (ai.strip(), sql2), stderr=subprocess.STDOUT, shell=True)
-            print b
-
-def run_checkpoint():
-    sql = '''CHECKPOINT'''
-    a = subprocess.check_output('psql postgres -t -c "%s"' % sql, stderr=subprocess.STDOUT, shell=True)
-    print a
-
-def start_verification(fsmap, include_types):
-    for content, fsinfo_list in fsmap.items():
-        for fsinfo in fsinfo_list:
-            replica_check = ReplicaCheck(fsinfo, include_types)
+def start_verification(fsmap, relation_types):
+    replica_check_list = []
+    for content, fslist in fsmap.items():
+        for fsrow in fslist:
+            replica_check = ReplicaCheck(fsrow, relation_types)
+            replica_check_list.append(replica_check)
             replica_check.start()
             replica_check.join()
 
+    for replica_check in replica_check_list:
+        if not replica_check.match:
+            print "replica check failed"
+            sys.exit(1)
+
+    print "replica check succeeded"
+
+def defargs():
+    parser = argparse.ArgumentParser(description='Run replication check on all segments')
+    parser.add_argument('--databases', '-d', type=str, required=False, default='all',
+                        help='Database names to run replication check on')
+    parser.add_argument('--relation-types', '-r', type=str, required=False, default='all',
+                        help='Relation types to run replication check on')
+
+    return parser.parse_args()
+
 if __name__ == '__main__':
-    if len(sys.argv) > 2:
-        print 'Usage: gp_replica_check.py [include_list]'
-        sys.exit(1)
+    args = defargs()
 
-    include_types = 'all'
-    if len(sys.argv) == 2:
-        include_types = sys.argv[1]
-
-    install_extension()
+    install_extension(args.databases)
     run_checkpoint()
-    fsmap = get_fsmap()
-    start_verification(fsmap, include_types)
+    start_verification(get_fsmap(), args.relation_types)
