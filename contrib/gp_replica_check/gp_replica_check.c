@@ -24,6 +24,7 @@ typedef struct RelfilenodeEntry
 	int relam;
 	int relkind;
 	char relstorage;
+	List *segments;
 } RelfilenodeEntry;
 
 typedef struct WalSenderInfo
@@ -54,11 +55,13 @@ static RelationTypeData relation_types[MAX_INCLUDE_RELATION_TYPES] = {
 static void init_relation_types(char *include_relation_types);
 static RelationTypeData get_relation_type_data(int relam, char relstorage, int relkind);
 static void mask_block(char *pagedata, BlockNumber blkno, Oid relam);
-static bool compare_files(char* primaryfilepath, char* mirrorfilepath, char *relfilenode, HTAB *relfilenode_map);
+static bool compare_files(char* primaryfilepath, char* mirrorfilepath, RelfilenodeEntry *rentry);
 static void get_walsender_info(WalSenderInfo **walsndinfo);
 static bool check_walsender_synced();
 static XLogRecPtr* get_sent_lsns();
 static bool compare_sent_lsns(XLogRecPtr *start_sent_lsns, XLogRecPtr *end_sent_lsns);
+static HTAB* get_relfilenode_map();
+static RelfilenodeEntry* get_relfilenode_entry(char *relfilenode, HTAB *relfilenode_map);
 
 static void
 init_relation_types(char *include_relation_types)
@@ -66,12 +69,10 @@ init_relation_types(char *include_relation_types)
 	List *elemlist;
 	ListCell *l;
 
-	/* Parse string into list of identifiers */
 	if (!SplitIdentifierString(include_relation_types, ',', &elemlist))
 	{
 		list_free(elemlist);
 
-		/* syntax error in list */
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				 errmsg("List syntax is invalid.")));
@@ -83,7 +84,7 @@ init_relation_types(char *include_relation_types)
 		bool found = false;
 		int type;
 
-		/* Check for 'all'. */
+		/* Check for 'all' */
 		if (pg_strcasecmp(tok, "all") == 0)
 		{
 			for (type = 0; type < MAX_INCLUDE_RELATION_TYPES; type++)
@@ -169,7 +170,7 @@ mask_block(char *pagedata, BlockNumber blockno, Oid relam)
 }
 
 static bool
-compare_files(char* primaryfilepath, char* mirrorfilepath, char *relfilenode, HTAB *relfilenode_map)
+compare_files(char* primaryfilepath, char* mirrorfilepath, RelfilenodeEntry *rentry)
 {
 	File primaryFile = 0;
 	File mirrorFile = 0;
@@ -193,10 +194,6 @@ compare_files(char* primaryfilepath, char* mirrorfilepath, char *relfilenode, HT
 		return false;
 	}
 
-	int rnode = atooid(relfilenode);
-	bool found = false;
-	RelfilenodeEntry *entry = (RelfilenodeEntry *)hash_search(relfilenode_map, (void *)&rnode, HASH_FIND, &found);
-
 	while (true)
 	{
 		primaryFileBytesRead = FileRead(primaryFile, primaryFileBuf, sizeof(primaryFileBuf));
@@ -204,12 +201,7 @@ compare_files(char* primaryfilepath, char* mirrorfilepath, char *relfilenode, HT
 
 		if (primaryFileBytesRead != mirrorFileBytesRead
 			|| primaryFileBytesRead < 0)
-		{
-			elog(WARNING, "%s relfilenode %s blockno %d is mismatched",
-				 get_relation_type_data(entry->relam, entry->relstorage, entry->relkind).name,
-				 relfilenode, blockno);
-			break;
-		}
+			break; /* extra bits found */
 
 		if (primaryFileBytesRead == 0)
 		{
@@ -217,25 +209,25 @@ compare_files(char* primaryfilepath, char* mirrorfilepath, char *relfilenode, HT
 			break; /* reached EOF */
 		}
 
-		if (entry->relstorage == RELSTORAGE_HEAP)
+		if (rentry->relstorage == RELSTORAGE_HEAP)
 		{
-			mask_block(primaryFileBuf, blockno, entry->relam);
-			mask_block(mirrorFileBuf, blockno, entry->relam);
+			mask_block(primaryFileBuf, blockno, rentry->relam);
+			mask_block(mirrorFileBuf, blockno, rentry->relam);
 		}
 
 		pg_md5_hash(primaryFileBuf, BLCKSZ, primaryfilechecksum);
 		pg_md5_hash(mirrorFileBuf, BLCKSZ, mirrorfilechecksum);
 
-		if (strcmp(primaryfilechecksum, mirrorfilechecksum) != 0)
-		{
-			elog(WARNING, "%s relfilenode %s blockno %d is mismatched",
-				 get_relation_type_data(entry->relam, entry->relstorage, entry->relkind).name,
-				 relfilenode, blockno);
-			break;
-		}
+		if (pg_strcasecmp(primaryfilechecksum, mirrorfilechecksum) != 0)
+			break; /* checksum mismatch */
 
 		blockno++;
 	}
+
+	if (!match)
+		elog(WARNING, "%s files %s and %s mismatch at blockno %d",
+			 get_relation_type_data(rentry->relam, rentry->relstorage, rentry->relkind).name,
+			 primaryfilepath, mirrorfilepath, blockno);
 
 	FileClose(primaryFile);
 	FileClose(mirrorFile);
@@ -268,10 +260,10 @@ get_walsender_info(WalSenderInfo **walsndinfo)
 static bool
 check_walsender_synced()
 {
-	int			i;
-	bool		synced;
-	int			max_retry = 60;
-	int			retry = 0;
+	int i;
+	bool synced;
+	const int max_retry = 60;
+	int retry = 0;
 
 	WalSenderInfo *walsndinfo[max_wal_senders];
 
@@ -283,14 +275,15 @@ check_walsender_synced()
 		get_walsender_info(walsndinfo);
 		for (i = 0; i < max_wal_senders; i++)
 		{
-			synced = synced && (walsndinfo[i]->state == WALSNDSTATE_STREAMING &&
-								XLByteEQ(walsndinfo[i]->flush, walsndinfo[i]->apply));
+			synced = (synced
+					  && walsndinfo[i]->state == WALSNDSTATE_STREAMING
+					  && XLByteEQ(walsndinfo[i]->flush, walsndinfo[i]->apply));
 		}
 
 		if (synced)
 			break;
 
-		pg_usleep(1000000);
+		pg_usleep(1000000 /* 1 second */);
 		retry++;
 	}
 
@@ -352,23 +345,20 @@ get_relfilenode_map()
 	while((tup = heap_getnext(scan, ForwardScanDirection)) != NULL)
 	{
 		Form_pg_class classtuple = (Form_pg_class) GETSTRUCT(tup);
-		if ((classtuple->relkind != RELKIND_INDEX
-			&& classtuple->relkind != RELKIND_RELATION
-			&& classtuple->relkind != RELKIND_SEQUENCE)
+		if ((classtuple->relkind == RELKIND_UNCATALOGED
+			 || classtuple->relkind == RELKIND_VIEW
+			 || classtuple->relkind == RELKIND_COMPOSITE_TYPE)
 			|| (classtuple->relstorage != RELSTORAGE_HEAP
 				&& !relstorage_is_ao(classtuple->relstorage)))
 			continue;
 
-		if (!get_relation_type_data(classtuple->relam, classtuple->relstorage, classtuple->relkind).include)
-			continue;
-
-		RelfilenodeEntry *rent;
+		RelfilenodeEntry *rentry;
 		int rnode = classtuple->relfilenode;
-		rent = hash_search(relfilenodemap, (void *)&rnode, HASH_ENTER, NULL);
-		rent->relfilenode = classtuple->relfilenode;
-		rent->relam = classtuple->relam;
-		rent->relkind = classtuple->relkind;
-		rent->relstorage = classtuple->relstorage;
+		rentry = hash_search(relfilenodemap, (void *)&rnode, HASH_ENTER, NULL);
+		rentry->relfilenode = classtuple->relfilenode;
+		rentry->relam = classtuple->relam;
+		rentry->relkind = classtuple->relkind;
+		rentry->relstorage = classtuple->relstorage;
 	}
 	heap_endscan(scan);
 	heap_close(pg_class, AccessShareLock);
@@ -376,19 +366,19 @@ get_relfilenode_map()
 	return relfilenodemap;
 }
 
-static HTAB*
-init_primary_file_set()
+static RelfilenodeEntry*
+get_relfilenode_entry(char *relfilenode, HTAB *relfilenode_map)
 {
-	HASHCTL primary_file_ctl;
-	int hash_flags;
+	int rnode;
+	bool found;
 
-	MemSet(&primary_file_ctl, 0, sizeof(primary_file_ctl));
-	primary_file_ctl.keysize = MAXPGPATH;
-	primary_file_ctl.entrysize = MAXPGPATH;
-	primary_file_ctl.hash = string_hash;
-	hash_flags = (HASH_ELEM | HASH_FUNCTION);
+	rnode = atooid(relfilenode);
+	RelfilenodeEntry *rentry = hash_search(relfilenode_map, (void *)&rnode, HASH_FIND, &found);
 
-	return hash_create("primary files set", 50000, &primary_file_ctl, hash_flags);
+	if (found)
+		return rentry;
+
+	return NULL;
 }
 
 PG_FUNCTION_INFO_V1(gp_replica_check);
@@ -413,67 +403,93 @@ gp_replica_check(PG_FUNCTION_ARGS)
 	/* Store the last commit to compare at the end */
 	XLogRecPtr *start_sent_lsns = get_sent_lsns();
 
+	/* Store information from pg_class for each relfilenode */
 	HTAB *relfilenode_map = get_relfilenode_map();
-	HTAB *primary_file_set = init_primary_file_set();
 
+	/*
+	 * For each relfilenode in primary, if it is of type specified from user
+	 * input, do comparison with its corresponding file on the mirror
+	 */
 	while ((dent = ReadDir(primarydir, primarydirpath)) != NULL)
 	{
 		char primaryfilename[MAXPGPATH] = {'\0'};
 		char mirrorfilename[MAXPGPATH] = {'\0'};
-		bool file_eq = false;
+		char *d_name_copy;
+		char *relfilenode;
 
-		if (strncmp(dent->d_name, "pg", 2) == 0
-			|| strncmp(dent->d_name, ".", 1) == 0)
+		if (pg_strncasecmp(dent->d_name, "pg", 2) == 0
+			|| pg_strncasecmp(dent->d_name, ".", 1) == 0)
 			continue;
+
+		d_name_copy = pstrdup(dent->d_name);
+		relfilenode = strtok(d_name_copy, ".");
+		RelfilenodeEntry *rentry = get_relfilenode_entry(relfilenode, relfilenode_map);
+
+		/* not a valid relfilenode or skip if relation type not requested by user input */
+		if (rentry == NULL)
+		{
+			elog(WARNING, "relfilenode %s not present in primary's pg_class", relfilenode);
+			continue;
+		}
+
+		if (!get_relation_type_data(rentry->relam, rentry->relstorage, rentry->relkind).include)
+			continue;
+
+		d_name_copy = strtok(NULL, ".");
+		if (d_name_copy != NULL)
+			rentry->segments = lappend_int(rentry->segments, atoi(d_name_copy));
 
 		sprintf(primaryfilename, "%s/%s", primarydirpath, dent->d_name);
 		sprintf(mirrorfilename, "%s/%s", mirrordirpath, dent->d_name);
 
-		char *d_name_copy = pstrdup(dent->d_name);
-		char *relfilenode = strtok(d_name_copy, ".");
-		bool include_found;
-
-		int rnode = atooid(relfilenode);
-		hash_search(relfilenode_map, (void *)&rnode, HASH_FIND, &include_found);
-		if (!include_found || d_name_copy == NULL)
-			continue;
-
-		file_eq = compare_files(primaryfilename, mirrorfilename, relfilenode, relfilenode_map);
-
-		if (!file_eq)
-			elog(WARNING, "Files %s and %s differ", primaryfilename, mirrorfilename);
-
-		dir_equal = dir_equal && file_eq;
-
-		/* Store each filename for fileset comparison later */
-		hash_search(primary_file_set, dent->d_name, HASH_ENTER, NULL);
+		/* do the file comparison */
+		dir_equal = dir_equal && compare_files(primaryfilename, mirrorfilename, rentry);
 	}
 	FreeDir(primarydir);
 
 	/* Open up mirrordirpath and verify each mirror file exist in the primary hash table */
-	bool found = false;
 	while ((dent = ReadDir(mirrordir, mirrordirpath)) != NULL)
 	{
-		if (strncmp(dent->d_name, "pg", 2) == 0
-			|| strncmp(dent->d_name, ".", 1) == 0)
+		char *d_name_copy;
+		char *relfilenode;
+
+		if (pg_strncasecmp(dent->d_name, "pg", 2) == 0
+			|| pg_strncasecmp(dent->d_name, ".", 1) == 0)
 			continue;
 
-		char *d_name_copy = pstrdup(dent->d_name);
-		char *relfilenode = strtok(d_name_copy, ".");
-		bool include_found;
+		d_name_copy = pstrdup(dent->d_name);
+		relfilenode = strtok(d_name_copy, ".");
+		RelfilenodeEntry *rentry = get_relfilenode_entry(relfilenode, relfilenode_map);
 
-		int rnode = atooid(relfilenode);
-		hash_search(relfilenode_map, (void *)&rnode, HASH_FIND, &include_found);
-		if (!include_found || d_name_copy == NULL)
-			continue;
+		if (rentry != NULL)
+		{
+			d_name_copy = strtok(NULL, ".");
+			if (d_name_copy != NULL)
+			{
+				ListCell *l;
+				bool found = false;
+				foreach (l, rentry->segments)
+				{
+					if (lfirst_int(l) == atoi(d_name_copy))
+					{
+						found = true;
+						break;
+					}
+				}
 
-		hash_search(primary_file_set, dent->d_name, HASH_FIND, &found);
-		if (!found)
-			elog(WARNING, "Found extra file on mirror: %s/%s", mirrordirpath, dent->d_name);
+				if (!found && get_relation_type_data(rentry->relam, rentry->relstorage, rentry->relkind).include)
+					elog(WARNING,
+						 "found extra %s file on mirror: %s/%s",
+						 get_relation_type_data(rentry->relam, rentry->relstorage, rentry->relkind).name,
+						 mirrordirpath,
+						 dent->d_name);
+			}
+		}
+		else
+			elog(WARNING, "found extra unknown file on mirror: %s/%s", mirrordirpath, dent->d_name);
 	}
 	FreeDir(mirrordir);
 	hash_destroy(relfilenode_map);
-	hash_destroy(primary_file_set);
 
 	/* Compare stored last commit with now */
 	XLogRecPtr *end_sent_lsns = get_sent_lsns();
