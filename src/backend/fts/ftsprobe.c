@@ -76,7 +76,7 @@ ftsConnect(CdbComponentDatabaseInfo *dbInfo,
 static bool
 ftsSend(FtsConnectionInfo *ftsInfo)
 {
-	if (!PQsendQuery(ftsInfo->conn, FTS_MSG_TYPE_PROBE))
+	if (!PQsendQuery(ftsInfo->conn, ftsInfo->messagetype))
 	{
 		write_log("FTS: failed to send query '%s' to (content=%d, dbid=%d): "
 				  "connection status %d, %s",
@@ -105,10 +105,16 @@ probeRecordResponse(FtsConnectionInfo *ftsInfo, PGresult *result)
 	Assert (isInSync);
 	ftsInfo->result->isInSync = *isInSync;
 
-	write_log("FTS: segment (content=%d, dbid=%d, role=%c) reported isMirrorUp %d and isInSync %d to the prober.",
+	int *isSyncRepEnabled = (int *) PQgetvalue(result, 0,
+											   Anum_fts_message_response_is_syncrep_enabled);
+	Assert (isSyncRepEnabled);
+	ftsInfo->result->isSyncRepEnabled = *isSyncRepEnabled;
+
+	write_log("FTS: segment (content=%d, dbid=%d, role=%c) reported isMirrorUp %d, isInSync %d, and isSyncRepEnabled %d to the prober.",
 			  ftsInfo->segmentId, ftsInfo->dbId, ftsInfo->role,
 			  ftsInfo->result->isMirrorAlive,
-			  ftsInfo->result->isInSync);
+			  ftsInfo->result->isInSync,
+			  ftsInfo->result->isSyncRepEnabled);
 }
 
 /*
@@ -175,6 +181,7 @@ ftsReceive(FtsConnectionInfo *ftsInfo)
 			return false;	/* trouble */
 		}
 	}
+
 	if (PQresultStatus(lastResult) != PGRES_TUPLES_OK)
 	{
 		PQclear(lastResult);
@@ -184,6 +191,7 @@ ftsReceive(FtsConnectionInfo *ftsInfo)
 				  PQerrorMessage(ftsInfo->conn));
 		return false;
 	}
+
 	if (PQnfields(lastResult) != Natts_fts_message_response ||
 		PQntuples(lastResult) != FTS_MESSAGE_RESPONSE_NTUPLES)
 	{
@@ -198,7 +206,16 @@ ftsReceive(FtsConnectionInfo *ftsInfo)
 		return false;
 	}
 
-	probeRecordResponse(ftsInfo, lastResult);
+	/*
+	 * FTS_MSG_TYPE_SYNCREP_OFF response only needs an ack for now. In future
+	 * iterations, we could parse that response to detect the case when mirror
+	 * has come back up in-sync when previously thought not in-sync from probe
+	 * response. In that situation, we should force another probe to update
+	 * the gp_segment_configuration to avoid waiting the fts probe interval.
+	 */
+	if (ftsInfo->messagetype == FTS_MSG_TYPE_PROBE)
+		probeRecordResponse(ftsInfo, lastResult);
+
 	return true;
 }
 
@@ -252,7 +269,7 @@ ftsSegmentHelper(CdbComponentDatabaseInfo *dbInfo,
 }
 
 static void
-messageWalRepSegment(probe_response_per_segment *response)
+messageWalRepSegment(probe_response_per_segment *response, const char* messagetype)
 {
 	Assert(response);
 	CdbComponentDatabaseInfo *segment_db_info = response->segment_db_info;
@@ -266,6 +283,7 @@ messageWalRepSegment(probe_response_per_segment *response)
 	ftsInfo.role = segment_db_info->role;
 	ftsInfo.mode = segment_db_info->mode;
 	ftsInfo.result = &(response->result);
+	ftsInfo.messagetype = messagetype;
 
 	ftsSegmentHelper(segment_db_info, &ftsInfo);
 }
@@ -314,7 +332,7 @@ messageWalRepSegmentFromThread(void *arg)
 		/* now let's probe the primary. */
 		probe_response_per_segment *response = &context->responses[response_index];
 		Assert(SEGMENT_IS_ACTIVE_PRIMARY(response->segment_db_info));
-		messageWalRepSegment(response);
+		messageWalRepSegment(response, context->messagetype);
 	}
 
 	return NULL;

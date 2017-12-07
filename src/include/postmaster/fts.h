@@ -23,10 +23,12 @@
 
 /* Queries for FTS messages */
 #define	FTS_MSG_TYPE_PROBE "PROBE"
+#define FTS_MSG_TYPE_SYNCREP_OFF "SYNCREP_OFF"
 
-#define Natts_fts_message_response 2
+#define Natts_fts_message_response 3
 #define Anum_fts_message_response_is_mirror_up 0
 #define Anum_fts_message_response_is_in_sync 1
+#define Anum_fts_message_response_is_syncrep_enabled 2
 
 #define FTS_MESSAGE_RESPONSE_NTUPLES 1
 
@@ -36,6 +38,7 @@ typedef struct
 	bool isPrimaryAlive;
 	bool isMirrorAlive;
 	bool isInSync;
+	bool isSyncRepEnabled;
 } probe_result;
 
 typedef struct
@@ -47,6 +50,7 @@ typedef struct
 
 typedef struct
 {
+	const char *messagetype; /* probe or turn off syncrep */
 	int count;
 	probe_response_per_segment *responses;
 } fts_context;
@@ -55,6 +59,7 @@ typedef struct FtsResponse
 {
 	bool IsMirrorUp;
 	bool IsInSync;
+	bool IsSyncRepEnabled;
 } FtsResponse;
 
 #endif
@@ -163,7 +168,7 @@ extern bool FtsIsActive(void);
 /*
  * Interface for WALREP specific checking
  */
-extern void HandleFtsWalRepProbe(void);
+extern void HandleFtsMessage(const char* query_string);
 extern void FtsWalRepMessageSegments(fts_context *context);
 #else
 extern bool probePublishUpdate(CdbComponentDatabases *dbs, uint8 *probe_results);

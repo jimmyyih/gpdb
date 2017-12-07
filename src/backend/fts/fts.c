@@ -504,6 +504,7 @@ static bool
 probeWalRepPublishUpdate(CdbComponentDatabases *cdbs, fts_context *context)
 {
 	bool is_updated = false;
+	int updated_count = 0;
 
 	for (int response_index = 0; response_index < context->count; response_index ++)
 	{
@@ -542,6 +543,13 @@ probeWalRepPublishUpdate(CdbComponentDatabases *cdbs, fts_context *context)
 		 */
 		if (IsInSync != SEGMENT_IS_IN_SYNC(primary))
 			UpdatePrimary = UpdateMirror = true;
+
+		if (!IsMirrorAlive && response->result.isSyncRepEnabled)
+		{
+			/* reschedule for the FTS to send a syncrep disable message */
+			updated_count++;
+			response->isScheduled = false;
+		}
 
 		/*
 		 * ----------------------------
@@ -590,12 +598,14 @@ probeWalRepPublishUpdate(CdbComponentDatabases *cdbs, fts_context *context)
 		}
 	}
 
+	context->count = updated_count;
 	return is_updated;
 }
 
 static void
 FtsWalRepInitProbeContext(CdbComponentDatabases *cdbs, fts_context *context)
 {
+	context->messagetype = FTS_MSG_TYPE_PROBE;
 	context->count = cdbs->total_segments;
 	context->responses = (probe_response_per_segment *)palloc(context->count * sizeof(probe_response_per_segment));
 
@@ -632,6 +642,7 @@ FtsWalRepInitProbeContext(CdbComponentDatabases *cdbs, fts_context *context)
 		response->result.isPrimaryAlive = false;
 		response->result.isMirrorAlive = SEGMENT_IS_ALIVE(mirror);
 		response->result.isInSync = false;
+		response->result.isSyncRepEnabled = false;
 
 		response->segment_db_info = primary;
 		response->isScheduled = false;
@@ -740,6 +751,13 @@ void FtsLoop()
 		FtsWalRepMessageSegments(&context);
 
 		updated_probe_state = probeWalRepPublishUpdate(cdbs, &context);
+
+		/* some primaries may need to be unblocked */
+		if (context.count > 0)
+		{
+			context.messagetype = FTS_MSG_TYPE_SYNCREP_OFF;
+			FtsWalRepMessageSegments(&context);
+		}
 #else
 		/* probe segments */
 		FtsProbeSegments(cdbs, scan_status);
