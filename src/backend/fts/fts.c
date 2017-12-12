@@ -501,12 +501,14 @@ probeWalRepUpdateConfig(int16 dbid, int16 segindex, bool IsSegmentAlive, bool Is
 }
 
 static bool
-probeWalRepPublishUpdate(CdbComponentDatabases *cdbs, fts_context *context)
+probeWalRepPublishUpdate(CdbComponentDatabases *cdbs, fts_context *context,
+						 bool *need_syncrep_disabled)
 {
 	bool is_updated = false;
-	int updated_count = 0;
+	*need_syncrep_disabled = false;
 
-	for (int response_index = 0; response_index < context->count; response_index ++)
+	for (int response_index = 0; response_index < context->num_primary_segments;
+		 response_index ++)
 	{
 		probe_response_per_segment *response = &(context->responses[response_index]);
 
@@ -547,8 +549,8 @@ probeWalRepPublishUpdate(CdbComponentDatabases *cdbs, fts_context *context)
 		if (!IsMirrorAlive && response->result.isSyncRepEnabled)
 		{
 			/* reschedule for the FTS to send a syncrep disable message */
-			updated_count++;
 			response->isScheduled = false;
+			*need_syncrep_disabled = true;
 		}
 
 		/*
@@ -598,7 +600,6 @@ probeWalRepPublishUpdate(CdbComponentDatabases *cdbs, fts_context *context)
 		}
 	}
 
-	context->count = updated_count;
 	return is_updated;
 }
 
@@ -606,8 +607,9 @@ static void
 FtsWalRepInitProbeContext(CdbComponentDatabases *cdbs, fts_context *context)
 {
 	context->messagetype = FTS_MSG_TYPE_PROBE;
-	context->count = cdbs->total_segments;
-	context->responses = (probe_response_per_segment *)palloc(context->count * sizeof(probe_response_per_segment));
+	context->num_primary_segments = cdbs->total_segments;
+	context->responses = (probe_response_per_segment *) palloc(
+		context->num_primary_segments * sizeof(probe_response_per_segment));
 
 	int response_index = 0;
 
@@ -647,7 +649,7 @@ FtsWalRepInitProbeContext(CdbComponentDatabases *cdbs, fts_context *context)
 		response->segment_db_info = primary;
 		response->isScheduled = false;
 
-		Assert(response_index < context->count);
+		Assert(response_index < context->num_primary_segments);
 		response_index ++;
 	}
 }
@@ -746,14 +748,16 @@ void FtsLoop()
 
 #ifdef USE_SEGWALREP
 		fts_context context;
+		bool need_syncrep_disabled;
 
 		FtsWalRepInitProbeContext(cdbs, &context);
 		FtsWalRepMessageSegments(&context);
 
-		updated_probe_state = probeWalRepPublishUpdate(cdbs, &context);
+		updated_probe_state =
+			probeWalRepPublishUpdate(cdbs, &context, &need_syncrep_disabled);
 
 		/* some primaries may need to be unblocked */
-		if (context.count > 0)
+		if (need_syncrep_disabled)
 		{
 			context.messagetype = FTS_MSG_TYPE_SYNCREP_OFF;
 			FtsWalRepMessageSegments(&context);

@@ -51,7 +51,7 @@ typedef struct
 typedef struct
 {
 	const char *messagetype; /* probe or turn off syncrep */
-	int count;
+	int num_primary_segments; /* total number of primary segments */
 	probe_response_per_segment *responses;
 } fts_context;
 
