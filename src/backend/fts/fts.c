@@ -546,9 +546,13 @@ probeWalRepPublishUpdate(CdbComponentDatabases *cdbs, fts_context *context,
 		if (IsInSync != SEGMENT_IS_IN_SYNC(primary))
 			UpdatePrimary = UpdateMirror = true;
 
+		/* Primary must block commits as long as it and its mirror are alive. */
+		AssertImply(!UpdateMirror && IsMirrorAlive && IsPrimaryAlive,
+					response->result.isSyncRepEnabled);
+
 		if (!IsMirrorAlive && response->result.isSyncRepEnabled)
 		{
-			/* reschedule for the FTS to send a syncrep disable message */
+			/* Reschedule for the FTS to send a syncrep disable message */
 			response->isScheduled = false;
 			*need_syncrep_disabled = true;
 		}

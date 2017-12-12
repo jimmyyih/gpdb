@@ -389,8 +389,11 @@ test_PrimayUpMirrorUpNotInSync_to_PrimayUpMirrorUpNotInSync(void **state)
 									GP_SEGMENT_CONFIGURATION_MODE_NOTINSYNC);
 	FtsWalRepInitProbeContext(cdb_component_dbs, &context);
 
+	/* Primary must block commits as long as it and its mirror are alive. */
 	context.responses[0].result.isPrimaryAlive = true;
+	context.responses[0].result.isSyncRepEnabled = true;
 	context.responses[1].result.isPrimaryAlive = true;
+	context.responses[1].result.isSyncRepEnabled = true;
 
 	/* probeWalRepPublishUpdate should not update a probe state */
 	bool is_updated =
@@ -422,6 +425,7 @@ test_PrimayUpMirrorUpNotInSync_to_PrimaryDown(void **state)
 
 	/* Response received from second segment */
 	context.responses[1].result.isPrimaryAlive = true;
+	context.responses[1].result.isSyncRepEnabled = true;
 
 	/* No update must happen */
 	bool is_updated =
@@ -455,8 +459,9 @@ test_PrimayUpMirrorUpNotInSync_to_PrimaryUpMirrorDownNotInSync(void **state)
 	context.responses[0].result.isPrimaryAlive = true;
 	context.responses[0].result.isMirrorAlive = false;
 
+	/* Syncrep must be enabled because mirror is up. */
 	context.responses[1].result.isPrimaryAlive = true;
-
+	context.responses[1].result.isSyncRepEnabled = true;
 
 	/* the mirror will be updated */
 	PrimaryOrMirrorWillBeUpdated(1);
@@ -510,7 +515,9 @@ test_PrimaryUpMirrorDownNotInSync_to_PrimayUpMirrorUpNotInSync(void **state)
 
 	/* no change */
 	context.responses[1].result.isPrimaryAlive = true;
+	context.responses[1].result.isSyncRepEnabled = true;
 	context.responses[2].result.isPrimaryAlive = true;
+	context.responses[2].result.isSyncRepEnabled = true;
 
 	/* the mirror will be updated */
 	PrimaryOrMirrorWillBeUpdated(1);
@@ -572,6 +579,7 @@ test_probeWalRepPublishUpdate_multiple_segments(void **state)
 
 	/* Fourth segment, response received no change */
 	context.responses[3].result.isPrimaryAlive = true;
+	context.responses[3].result.isSyncRepEnabled = true;
 
 	/* we are updating two of the four segments */
 	PrimaryOrMirrorWillBeUpdated(2);
@@ -726,6 +734,7 @@ test_PrimayUpMirrorUpSync_to_PrimaryDown(void **state)
 
 	/* Probe responded with Mirror Up and Not In SYNC */
 	context.responses[0].result.isPrimaryAlive = false;
+	context.responses[0].result.isSyncRepEnabled = true;
 
 	/* we are updating one segment pair */
 	PrimaryOrMirrorWillBeUpdated(1);
@@ -766,6 +775,7 @@ test_PrimayUpMirrorUpNotInSync_to_PrimayUpMirrorUpSync(void **state)
 	/* Probe responded with Mirror Up and SYNC */
 	context.responses[0].result.isPrimaryAlive = true;
 	context.responses[0].result.isInSync = true;
+	context.responses[0].result.isSyncRepEnabled = true;
 
 	/* we are updating one segment pair */
 	PrimaryOrMirrorWillBeUpdated(1);
@@ -898,6 +908,7 @@ test_PrimaryUpMirrorDownNotInSync_to_PrimaryDown(void **state)
 
 	/* no change for segment 2, probe returned */
 	context.responses[1].result.isPrimaryAlive = true;
+	context.responses[1].result.isSyncRepEnabled = true;
 
 	bool is_updated =
 		probeWalRepPublishUpdate(cdb_component_dbs, &context, &need_syncrep_disabled);
