@@ -15,6 +15,7 @@
 #include "replication/walsender_private.h"
 #include "utils/builtins.h"
 
+#ifdef USE_SEGWALREP
 /*
  * Check the WalSndCtl to obtain if mirror is up or down, if the wal sender is
  * in streaming, and if synchronous replication is enabled or not.
@@ -54,7 +55,6 @@ void GetMirrorStatus(FtsResponse *response)
 	LWLockRelease(SyncRepLock);
 }
 
-#ifdef USE_SEGWALREP
 /*
  * Set WalSndCtl->sync_standbys_defined to true to enable synchronous segment
  * WAL replication and insert synchronous_standby_names="*" into the

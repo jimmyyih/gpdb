@@ -19,9 +19,11 @@
 
 #include "postmaster/fts.h"
 
+#ifdef USE_SEGWALREP
 extern void GetMirrorStatus(FtsResponse *response);
 extern void SetSyncStandbysDefined(void);
 extern void UnsetSyncStandbysDefined(void);
+#endif
 
 extern Datum gp_replication_error(PG_FUNCTION_ARGS __attribute__((unused)) );
 
