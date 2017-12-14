@@ -76,11 +76,11 @@ ftsConnect(CdbComponentDatabaseInfo *dbInfo,
 static bool
 ftsSend(FtsConnectionInfo *ftsInfo)
 {
-	if (!PQsendQuery(ftsInfo->conn, ftsInfo->messagetype))
+	if (!PQsendQuery(ftsInfo->conn, ftsInfo->message))
 	{
 		write_log("FTS: failed to send query '%s' to (content=%d, dbid=%d): "
 				  "connection status %d, %s",
-				  FTS_MSG_TYPE_PROBE, ftsInfo->segmentId, ftsInfo->dbId,
+				  FTS_MSG_PROBE, ftsInfo->segmentId, ftsInfo->dbId,
 				  ftsInfo->conn->status, ftsInfo->conn->errorMessage.data);
 		return false;
 	}
@@ -207,16 +207,16 @@ ftsReceive(FtsConnectionInfo *ftsInfo)
 	}
 
 	/*
-	 * FTS_MSG_TYPE_SYNCREP_OFF response only needs an ack for now. In future
+	 * FTS_MSG_SYNCREP_OFF response only needs an ack for now. In future
 	 * iterations, we could parse that response to detect the case when mirror
 	 * has come back up in-sync when previously thought not in-sync from probe
 	 * response. In that situation, we should force another probe to update
 	 * the gp_segment_configuration to avoid waiting the fts probe interval.
 	 */
-	if (ftsInfo->messagetype == FTS_MSG_TYPE_PROBE)
+	if (ftsInfo->message == FTS_MSG_PROBE)
 		probeRecordResponse(ftsInfo, lastResult);
 	/* Primary must have syncrep disabled in response to SYNCREP_OFF message. */
-	AssertImply(ftsInfo->messagetype == FTS_MSG_TYPE_SYNCREP_OFF,
+	AssertImply(ftsInfo->message == FTS_MSG_SYNCREP_OFF,
 				PQgetvalue(lastResult, 0, Anum_fts_message_response_is_syncrep_enabled) != NULL &&
 				*(PQgetvalue(lastResult, 0, Anum_fts_message_response_is_syncrep_enabled)) == false);
 
@@ -273,7 +273,7 @@ ftsSegmentHelper(CdbComponentDatabaseInfo *dbInfo,
 }
 
 static void
-messageWalRepSegment(probe_response_per_segment *response, const char* messagetype)
+messageWalRepSegment(probe_response_per_segment *response)
 {
 	Assert(response);
 	CdbComponentDatabaseInfo *segment_db_info = response->segment_db_info;
@@ -287,7 +287,7 @@ messageWalRepSegment(probe_response_per_segment *response, const char* messagety
 	ftsInfo.role = segment_db_info->role;
 	ftsInfo.mode = segment_db_info->mode;
 	ftsInfo.result = &(response->result);
-	ftsInfo.messagetype = messagetype;
+	ftsInfo.message = response->message;
 
 	ftsSegmentHelper(segment_db_info, &ftsInfo);
 }
@@ -336,7 +336,7 @@ messageWalRepSegmentFromThread(void *arg)
 		/* now let's probe the primary. */
 		probe_response_per_segment *response = &context->responses[response_index];
 		Assert(SEGMENT_IS_ACTIVE_PRIMARY(response->segment_db_info));
-		messageWalRepSegment(response, context->messagetype);
+		messageWalRepSegment(response);
 	}
 
 	return NULL;

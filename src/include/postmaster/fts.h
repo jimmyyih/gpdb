@@ -22,8 +22,8 @@
 #ifdef USE_SEGWALREP
 
 /* Queries for FTS messages */
-#define	FTS_MSG_TYPE_PROBE "PROBE"
-#define FTS_MSG_TYPE_SYNCREP_OFF "SYNCREP_OFF"
+#define	FTS_MSG_PROBE "PROBE"
+#define FTS_MSG_SYNCREP_OFF "SYNCREP_OFF"
 
 #define Natts_fts_message_response 3
 #define Anum_fts_message_response_is_mirror_up 0
@@ -46,11 +46,11 @@ typedef struct
 	CdbComponentDatabaseInfo *segment_db_info;
 	probe_result result;
 	bool isScheduled;
+	const char *message;
 } probe_response_per_segment;
 
 typedef struct
 {
-	const char *messagetype; /* probe or turn off syncrep */
 	int num_primary_segments; /* total number of primary segments */
 	probe_response_per_segment *responses;
 } fts_context;

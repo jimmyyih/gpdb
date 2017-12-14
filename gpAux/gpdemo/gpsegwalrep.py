@@ -245,6 +245,10 @@ class DestroyMirrors():
         # omitted, FTS will stop probing as soon as mirrors are
         # removed from catalog and primaries will be left "in-sync"
         # without mirrors.
+        #
+        # FIXME: enhance gp_remove_segment_mirror() to do this, so
+        # that utility remains simplified.  Remove this stopgap
+        # thereafter.
         ForceFTSProbeScan(self.clusterconfig,
                           GpSegmentConfiguration.STATUS_DOWN,
                           GpSegmentConfiguration.NOT_IN_SYNC)

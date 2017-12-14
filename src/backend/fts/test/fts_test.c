@@ -302,15 +302,14 @@ void
 test_probeWalRepPublishUpdate_for_zero_segment(void **state)
 {
 	fts_context context;
-	bool need_syncrep_disabled;
 
 	context.num_primary_segments = 0;
 
-	bool is_updated =
-		probeWalRepPublishUpdate(NULL, &context, &need_syncrep_disabled);
+	bool is_updated = probeWalRepPublishUpdate(NULL, &context);
 
 	assert_false(is_updated);
-	assert_false(need_syncrep_disabled);
+	MockFtsIsActive(true);
+	assert_false(FtsWalRepSetupMessageContext(&context));
 }
 
 /*
@@ -320,7 +319,6 @@ void
 test_probeWalRepPublishUpdate_for_FtsIsActive_false(void **state)
 {
 	fts_context context;
-	bool need_syncrep_disabled;
 
 	context.num_primary_segments = 1;
 	probe_response_per_segment response;
@@ -334,11 +332,10 @@ test_probeWalRepPublishUpdate_for_FtsIsActive_false(void **state)
 	/* mock FtsIsActive false */
 	MockFtsIsActive(false);
 
-	bool is_updated =
-		probeWalRepPublishUpdate(NULL, &context, &need_syncrep_disabled);
+	bool is_updated = probeWalRepPublishUpdate(NULL, &context);
 
 	assert_false(is_updated);
-	assert_false(need_syncrep_disabled);
+	assert_false(FtsWalRepSetupMessageContext(&context));
 }
 
 /*
@@ -348,7 +345,6 @@ void
 test_probeWalRepPublishUpdate_for_shutdown_requested(void **state)
 {
 	fts_context context;
-	bool need_syncrep_disabled;
 
 	context.num_primary_segments = 1;
 	probe_response_per_segment response;
@@ -363,14 +359,12 @@ test_probeWalRepPublishUpdate_for_shutdown_requested(void **state)
 	shutdown_requested = true;
 	MockFtsIsActive(true);
 
-	bool is_updated =
-		probeWalRepPublishUpdate(NULL, &context, &need_syncrep_disabled);
+	bool is_updated = probeWalRepPublishUpdate(NULL, &context);
 
 	/* restore the original value to let the rest of the test pass */
 	shutdown_requested = false;
 
 	assert_false(is_updated);
-	assert_false(need_syncrep_disabled);
 }
 
 /*
@@ -381,7 +375,6 @@ void
 test_PrimayUpMirrorUpNotInSync_to_PrimayUpMirrorUpNotInSync(void **state)
 {
 	fts_context context;
-	bool need_syncrep_disabled;
 	CdbComponentDatabases *cdb_component_dbs;
 
 	cdb_component_dbs = InitTestCdb(2,
@@ -396,11 +389,10 @@ test_PrimayUpMirrorUpNotInSync_to_PrimayUpMirrorUpNotInSync(void **state)
 	context.responses[1].result.isSyncRepEnabled = true;
 
 	/* probeWalRepPublishUpdate should not update a probe state */
-	bool is_updated =
-		probeWalRepPublishUpdate(cdb_component_dbs, &context, &need_syncrep_disabled);
+	bool is_updated = probeWalRepPublishUpdate(cdb_component_dbs, &context);
 
 	assert_false(is_updated);
-	assert_false(need_syncrep_disabled);
+	assert_false(FtsWalRepSetupMessageContext(&context));
 	pfree(cdb_component_dbs);
 }
 
@@ -413,7 +405,6 @@ void
 test_PrimayUpMirrorUpNotInSync_to_PrimaryDown(void **state)
 {
 	fts_context context;
-	bool need_syncrep_disabled;
 	CdbComponentDatabases *cdb_component_dbs;
 
 	cdb_component_dbs = InitTestCdb(2,
@@ -428,11 +419,10 @@ test_PrimayUpMirrorUpNotInSync_to_PrimaryDown(void **state)
 	context.responses[1].result.isSyncRepEnabled = true;
 
 	/* No update must happen */
-	bool is_updated =
-		probeWalRepPublishUpdate(cdb_component_dbs, &context, &need_syncrep_disabled);
+	bool is_updated = probeWalRepPublishUpdate(cdb_component_dbs, &context);
 
 	assert_false(is_updated);
-	assert_false(need_syncrep_disabled);
+	assert_false(FtsWalRepSetupMessageContext(&context));
 	pfree(cdb_component_dbs);
 }
 
@@ -443,7 +433,6 @@ void
 test_PrimayUpMirrorUpNotInSync_to_PrimaryUpMirrorDownNotInSync(void **state)
 {
 	fts_context context;
-	bool need_syncrep_disabled;
 	CdbComponentDatabases *cdb_component_dbs;
 
 	cdb_component_dbs = InitTestCdb(2,
@@ -473,10 +462,9 @@ test_PrimayUpMirrorUpNotInSync_to_PrimaryUpMirrorDownNotInSync(void **state)
 										   /* willUpdatePrimary */ false,
 										   /* willUpdateMirror */ true);
 
-	bool is_updated =
-		probeWalRepPublishUpdate(cdb_component_dbs, &context, &need_syncrep_disabled);
+	bool is_updated = probeWalRepPublishUpdate(cdb_component_dbs, &context);
 
-	assert_false(need_syncrep_disabled);
+	assert_false(FtsWalRepSetupMessageContext(&context));
 	assert_true(is_updated);
 	pfree(cdb_component_dbs);
 }
@@ -489,7 +477,6 @@ void
 test_PrimaryUpMirrorDownNotInSync_to_PrimayUpMirrorUpNotInSync(void **state)
 {
 	fts_context context;
-	bool need_syncrep_disabled;
 	CdbComponentDatabases *cdb_component_dbs;
 
 	cdb_component_dbs = InitTestCdb(3,
@@ -529,11 +516,10 @@ test_PrimaryUpMirrorDownNotInSync_to_PrimayUpMirrorUpNotInSync(void **state)
 										   /* willUpdatePrimary */ false,
 										   /* willUpdateMirror */ true);
 
-	bool is_updated =
-		probeWalRepPublishUpdate(cdb_component_dbs, &context, &need_syncrep_disabled);
+	bool is_updated = probeWalRepPublishUpdate(cdb_component_dbs, &context);
 
 	/* we do not expect to send syncrep off libpq message */
-	assert_false(need_syncrep_disabled);
+	assert_false(FtsWalRepSetupMessageContext(&context));
 	assert_true(context.responses[0].isScheduled);
 
 	assert_true(is_updated);
@@ -548,7 +534,6 @@ void
 test_probeWalRepPublishUpdate_multiple_segments(void **state)
 {
 	fts_context context;
-	bool need_syncrep_disabled;
 	CdbComponentDatabases *cdb_component_dbs;
 
 	cdb_component_dbs = InitTestCdb(4,
@@ -607,10 +592,9 @@ test_probeWalRepPublishUpdate_multiple_segments(void **state)
 										   /* willUpdateMirror */ true);
 	/* Fourth segment will not change status */
 
-	bool is_updated =
-		probeWalRepPublishUpdate(cdb_component_dbs, &context, &need_syncrep_disabled);
+	bool is_updated = probeWalRepPublishUpdate(cdb_component_dbs, &context);
 
-	assert_false(need_syncrep_disabled);
+	assert_false(FtsWalRepSetupMessageContext(&context));
 	assert_true(is_updated);
 	pfree(cdb_component_dbs);
 }
@@ -623,7 +607,6 @@ void
 test_PrimayUpMirrorUpSync_to_PrimaryUpMirrorUpNotInSync(void **state)
 {
 	fts_context context;
-	bool need_syncrep_disabled;
 	CdbComponentDatabases *cdb_component_dbs;
 
 	/* Start in SYNC state */
@@ -650,11 +633,10 @@ test_PrimayUpMirrorUpSync_to_PrimaryUpMirrorUpNotInSync(void **state)
 										   /* willUpdatePrimary */ true,
 										   /* willUpdateMirror */ true);
 
-	bool is_updated =
-		probeWalRepPublishUpdate(cdb_component_dbs, &context, &need_syncrep_disabled);
+	bool is_updated = probeWalRepPublishUpdate(cdb_component_dbs, &context);
 
 	/* we do not expect to send syncrep off libpq message */
-	assert_false(need_syncrep_disabled);
+	assert_false(FtsWalRepSetupMessageContext(&context));
 	assert_true(context.responses[0].isScheduled);
 
 	assert_true(is_updated);
@@ -669,7 +651,6 @@ void
 test_PrimayUpMirrorUpSync_to_PrimaryUpMirrorDownNotInSync(void **state)
 {
 	fts_context context;
-	bool need_syncrep_disabled;
 	CdbComponentDatabases *cdb_component_dbs;
 
 	/* Start in SYNC mode */
@@ -702,11 +683,10 @@ test_PrimayUpMirrorUpSync_to_PrimaryUpMirrorDownNotInSync(void **state)
 										   /* willUpdatePrimary */ true,
 										   /* willUpdateMirror */ true);
 
-	bool is_updated =
-		probeWalRepPublishUpdate(cdb_component_dbs, &context, &need_syncrep_disabled);
+	bool is_updated = probeWalRepPublishUpdate(cdb_component_dbs, &context);
 
 	/* we expect to send syncrep off libpq message to only one segment */
-	assert_true(need_syncrep_disabled);
+	assert_true(FtsWalRepSetupMessageContext(&context));
 	assert_false(context.responses[0].isScheduled);
 	assert_true(context.responses[1].isScheduled);
 
@@ -722,7 +702,6 @@ void
 test_PrimayUpMirrorUpSync_to_PrimaryDown(void **state)
 {
 	fts_context context;
-	bool need_syncrep_disabled;
 	CdbComponentDatabases *cdb_component_dbs;
 
 	/* set the mode to SYNC in config */
@@ -747,11 +726,10 @@ test_PrimayUpMirrorUpSync_to_PrimaryDown(void **state)
 										   /* willUpdatePrimary */ true,
 										   /* willUpdateMirror */ true);
 
-	bool is_updated =
-		probeWalRepPublishUpdate(cdb_component_dbs, &context, &need_syncrep_disabled);
+	bool is_updated = probeWalRepPublishUpdate(cdb_component_dbs, &context);
 
 	assert_true(is_updated);
-	assert_false(need_syncrep_disabled);
+	assert_false(FtsWalRepSetupMessageContext(&context));
 	pfree(cdb_component_dbs);
 }
 
@@ -763,7 +741,6 @@ void
 test_PrimayUpMirrorUpNotInSync_to_PrimayUpMirrorUpSync(void **state)
 {
 	fts_context context;
-	bool need_syncrep_disabled;
 	CdbComponentDatabases *cdb_component_dbs;
 
 	cdb_component_dbs = InitTestCdb(1,
@@ -788,11 +765,10 @@ test_PrimayUpMirrorUpNotInSync_to_PrimayUpMirrorUpSync(void **state)
 										   /* willUpdatePrimary */ true,
 										   /* willUpdateMirror */ true);
 
-	bool is_updated =
-		probeWalRepPublishUpdate(cdb_component_dbs, &context, &need_syncrep_disabled);
+	bool is_updated = probeWalRepPublishUpdate(cdb_component_dbs, &context);
 
 	assert_true(is_updated);
-	assert_false(need_syncrep_disabled);
+	assert_false(FtsWalRepSetupMessageContext(&context));
 	pfree(cdb_component_dbs);
 }
 
@@ -804,7 +780,6 @@ void
 test_PrimaryUpMirrorDownNotInSync_to_PrimayUpMirrorUpSync(void **state)
 {
 	fts_context context;
-	bool need_syncrep_disabled;
 	CdbComponentDatabases *cdb_component_dbs;
 
 	cdb_component_dbs = InitTestCdb(1,
@@ -836,11 +811,10 @@ test_PrimaryUpMirrorDownNotInSync_to_PrimayUpMirrorUpSync(void **state)
 										   /* willUpdatePrimary */ true,
 										   /* willUpdateMirror */ true);
 
-	bool is_updated =
-		probeWalRepPublishUpdate(cdb_component_dbs, &context, &need_syncrep_disabled);
+	bool is_updated = probeWalRepPublishUpdate(cdb_component_dbs, &context);
 
 	assert_true(is_updated);
-	assert_false(need_syncrep_disabled);
+	assert_false(FtsWalRepSetupMessageContext(&context));
 	pfree(cdb_component_dbs);
 }
 
@@ -851,7 +825,6 @@ void
 test_PrimaryUpMirrorDownNotInSync_to_PrimayUpMirrorDownNotInSync(void **state)
 {
 	fts_context context;
-	bool need_syncrep_disabled;
 	CdbComponentDatabases *cdb_component_dbs;
 
 	cdb_component_dbs = InitTestCdb(1,
@@ -872,10 +845,9 @@ test_PrimaryUpMirrorDownNotInSync_to_PrimayUpMirrorDownNotInSync(void **state)
 	context.responses[0].result.isMirrorAlive = false;
 	context.responses[0].result.isInSync = false;
 
-	bool is_updated =
-		probeWalRepPublishUpdate(cdb_component_dbs, &context, &need_syncrep_disabled);
+	bool is_updated = probeWalRepPublishUpdate(cdb_component_dbs, &context);
 
-	assert_false(need_syncrep_disabled);
+	assert_false(FtsWalRepSetupMessageContext(&context));
 	assert_false(is_updated);
 	pfree(cdb_component_dbs);
 }
@@ -888,7 +860,6 @@ void
 test_PrimaryUpMirrorDownNotInSync_to_PrimaryDown(void **state)
 {
 	fts_context context;
-	bool need_syncrep_disabled;
 	CdbComponentDatabases *cdb_component_dbs;
 
 	cdb_component_dbs = InitTestCdb(2,
@@ -910,11 +881,10 @@ test_PrimaryUpMirrorDownNotInSync_to_PrimaryDown(void **state)
 	context.responses[1].result.isPrimaryAlive = true;
 	context.responses[1].result.isSyncRepEnabled = true;
 
-	bool is_updated =
-		probeWalRepPublishUpdate(cdb_component_dbs, &context, &need_syncrep_disabled);
+	bool is_updated = probeWalRepPublishUpdate(cdb_component_dbs, &context);
 
 	assert_false(is_updated);
-	assert_false(need_syncrep_disabled);
+	assert_false(FtsWalRepSetupMessageContext(&context));
 	pfree(cdb_component_dbs);
 }
 

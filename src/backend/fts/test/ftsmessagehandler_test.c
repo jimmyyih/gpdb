@@ -72,7 +72,7 @@ test_HandleFtsWalRepProbe(void **state)
 
 	will_be_called(SetSyncStandbysDefined);
 
-	mockSendFtsResponse(FTS_MSG_TYPE_PROBE);
+	mockSendFtsResponse(FTS_MSG_PROBE);
 
 	HandleFtsWalRepProbe();
 }
@@ -91,7 +91,7 @@ test_HandleFtsWalRepSyncRepOff(void **state)
 
 	will_be_called(UnsetSyncStandbysDefined);
 
-	mockSendFtsResponse(FTS_MSG_TYPE_SYNCREP_OFF);
+	mockSendFtsResponse(FTS_MSG_SYNCREP_OFF);
 
 	HandleFtsWalRepSyncRepOff();
 }

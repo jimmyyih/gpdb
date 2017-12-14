@@ -89,7 +89,7 @@ HandleFtsWalRepProbe(void)
 	if (response.IsMirrorUp && !response.IsSyncRepEnabled)
 		SetSyncStandbysDefined();
 
-	SendFtsResponse(&response, FTS_MSG_TYPE_PROBE);
+	SendFtsResponse(&response, FTS_MSG_PROBE);
 }
 
 static void
@@ -102,17 +102,17 @@ HandleFtsWalRepSyncRepOff(void)
 	UnsetSyncStandbysDefined();
 	GetMirrorStatus(&response);
 
-	SendFtsResponse(&response, FTS_MSG_TYPE_SYNCREP_OFF);
+	SendFtsResponse(&response, FTS_MSG_SYNCREP_OFF);
 }
 
 void
 HandleFtsMessage(const char* query_string)
 {
-	if (strncmp(query_string, FTS_MSG_TYPE_PROBE,
-				strlen(FTS_MSG_TYPE_PROBE)) == 0)
+	if (strncmp(query_string, FTS_MSG_PROBE,
+				strlen(FTS_MSG_PROBE)) == 0)
 		HandleFtsWalRepProbe();
-	else if (strncmp(query_string, FTS_MSG_TYPE_SYNCREP_OFF,
-					 strlen(FTS_MSG_TYPE_SYNCREP_OFF)) == 0)
+	else if (strncmp(query_string, FTS_MSG_SYNCREP_OFF,
+					 strlen(FTS_MSG_SYNCREP_OFF)) == 0)
 		HandleFtsWalRepSyncRepOff();
 	else
 		ereport(ERROR,
