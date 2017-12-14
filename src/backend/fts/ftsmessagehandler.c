@@ -87,7 +87,11 @@ HandleFtsWalRepProbe(void)
 	 * later in the set function to avoid acquiring the SyncRepLock again.
 	 */
 	if (response.IsMirrorUp && !response.IsSyncRepEnabled)
+	{
 		SetSyncStandbysDefined();
+		/* Syncrep is enabled now, so respond accordingly. */
+		response.IsSyncRepEnabled = true;
+	}
 
 	SendFtsResponse(&response, FTS_MSG_PROBE);
 }

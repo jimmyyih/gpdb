@@ -499,6 +499,7 @@ test_PrimaryUpMirrorDownNotInSync_to_PrimayUpMirrorUpNotInSync(void **state)
 	context.responses[0].result.isPrimaryAlive = true;
 	context.responses[0].result.isMirrorAlive = true;
 	context.responses[0].isScheduled = true;
+	context.responses[0].result.isSyncRepEnabled = true;
 
 	/* no change */
 	context.responses[1].result.isPrimaryAlive = true;
@@ -555,6 +556,7 @@ test_probeWalRepPublishUpdate_multiple_segments(void **state)
 	/* First segment DOWN mirror, now reported UP */
 	context.responses[0].result.isPrimaryAlive = true;
 	context.responses[0].result.isMirrorAlive = true;
+	context.responses[0].result.isSyncRepEnabled = true;
 
 	/* Second segment no response received */
 
@@ -799,6 +801,7 @@ test_PrimaryUpMirrorDownNotInSync_to_PrimayUpMirrorUpSync(void **state)
 	context.responses[0].result.isPrimaryAlive = true;
 	context.responses[0].result.isMirrorAlive = true;
 	context.responses[0].result.isInSync = true;
+	context.responses[0].result.isSyncRepEnabled = true;
 
 	/* we are updating one segment pair */
 	PrimaryOrMirrorWillBeUpdated(1);

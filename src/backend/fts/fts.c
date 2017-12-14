@@ -549,11 +549,8 @@ probeWalRepPublishUpdate(CdbComponentDatabases *cdbs, fts_context *context)
 		if (IsInSync != SEGMENT_IS_IN_SYNC(primary))
 			UpdatePrimary = UpdateMirror = true;
 
-		/*
-		 * Primary must block commits as long as it and its mirror are alive.
-		 * The only exception is when mirror transitions from down to up.
-		 */
-		AssertImply(!UpdateMirror && IsMirrorAlive && IsPrimaryAlive,
+		/* Primary must block commits as long as it and its mirror are alive. */
+		AssertImply(IsMirrorAlive && IsPrimaryAlive,
 					response->result.isSyncRepEnabled);
 
 		/*
