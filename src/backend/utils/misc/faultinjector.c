@@ -349,6 +349,8 @@ FaultInjectorIdentifierEnumToString[] = {
 		/* inject fault before reading command */
 	_("copy_from_high_processed"),
 		/* inject fault to pretend copying from very high number of processed rows */
+	_("vacuum_update_dat_frozen_xid"),
+		/* inject fault after updating pg_database.datfrozenxid (but before committing) */
 	_("not recognized"),
 };
 
@@ -556,7 +558,8 @@ FaultInjector_InjectFaultNameIfSet(
 	 * using fault injector framework, this restriction needs to be lifted and
 	 * some other mechanism needs to be placed to avoid flaky failures.
 	 */
-	if (IsAutoVacuumLauncherProcess() || IsAutoVacuumWorkerProcess())
+	if (IsAutoVacuumLauncherProcess() ||
+		(IsAutoVacuumWorkerProcess() && 0 != strcmp("vacuum_update_dat_frozen_xid", faultName)))
 		return FaultInjectorTypeNotSpecified;
 
 	/*
@@ -1081,6 +1084,7 @@ FaultInjector_NewHashEntry(
 			case SendQEDetailsInitBackend:
 			case AppendOnlySkipCompression:
 			case CopyFromHighProcessed:
+			case VacuumUpdateDatFrozenXid:
 
 				break;
 			default:

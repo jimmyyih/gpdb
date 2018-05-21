@@ -233,6 +233,8 @@ typedef enum FaultInjectorIdentifier_e {
 
 	CopyFromHighProcessed,
 
+	VacuumUpdateDatFrozenXid,
+
 	/* INSERT has to be done before that line */
 	FaultInjectorIdMax,
 	
