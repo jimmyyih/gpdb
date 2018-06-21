@@ -1365,7 +1365,7 @@ test_updateMasterStandbyStatus_checkStandby_deleted(void **state)
 		sizeof(CdbComponentDatabaseInfo) * 2);
 	entry_db_info[0].dbid = 1;
 	entry_db_info[0].segindex = MASTER_CONTENT_ID;
-	entry_db_info[0].role = 'p';
+	entry_db_info[0].role = GP_SEGMENT_CONFIGURATION_ROLE_PRIMARY;
 	entry_db_info[0].mode = GP_SEGMENT_CONFIGURATION_MODE_INSYNC;
 	entry_db_info[0].status = GP_SEGMENT_CONFIGURATION_STATUS_UP;
 
@@ -1375,7 +1375,7 @@ test_updateMasterStandbyStatus_checkStandby_deleted(void **state)
 
 	expect_value(probeWalRepUpdateConfig, dbid, 1);
 	expect_value(probeWalRepUpdateConfig, segindex, MASTER_CONTENT_ID);
-	expect_value(probeWalRepUpdateConfig, role, 'p');
+	expect_value(probeWalRepUpdateConfig, role, GP_SEGMENT_CONFIGURATION_ROLE_PRIMARY);
 	expect_value(probeWalRepUpdateConfig, IsSegmentAlive, true);
 	expect_value(probeWalRepUpdateConfig, IsInSync, false);
 	will_be_called(probeWalRepUpdateConfig);
@@ -1390,7 +1390,8 @@ test_updateMasterStandbyStatus_checkStandby_down_to_up(void **state)
 	FtsResponse mockresponse;
 	CdbComponentDatabaseInfo *entry_db_info;
 	LargestIntegralType dbids[2] = {1, 8};
-	LargestIntegralType roles[2] = {'p', 'm'};
+	LargestIntegralType roles[2] = {GP_SEGMENT_CONFIGURATION_ROLE_PRIMARY,
+									GP_SEGMENT_CONFIGURATION_ROLE_MIRROR};
 
 	/* set up response to say standby is up */
 	mockresponse.IsMirrorUp = true;
@@ -1408,13 +1409,13 @@ test_updateMasterStandbyStatus_checkStandby_down_to_up(void **state)
 		sizeof(CdbComponentDatabaseInfo) * 2);
 	entry_db_info[0].dbid = 1;
 	entry_db_info[0].segindex = MASTER_CONTENT_ID;
-	entry_db_info[0].role = 'p';
+	entry_db_info[0].role = GP_SEGMENT_CONFIGURATION_ROLE_PRIMARY;
 	entry_db_info[0].mode = GP_SEGMENT_CONFIGURATION_MODE_NOTINSYNC;
 	entry_db_info[0].status = GP_SEGMENT_CONFIGURATION_STATUS_UP;
 
 	entry_db_info[1].dbid = 8;
 	entry_db_info[1].segindex = MASTER_CONTENT_ID;
-	entry_db_info[1].role = 'm';
+	entry_db_info[1].role = GP_SEGMENT_CONFIGURATION_ROLE_MIRROR;
 	entry_db_info[1].mode = GP_SEGMENT_CONFIGURATION_MODE_NOTINSYNC;
 	entry_db_info[1].status = GP_SEGMENT_CONFIGURATION_STATUS_DOWN;
 
@@ -1439,7 +1440,8 @@ test_updateMasterStandbyStatus_checkStandby_up_to_down(void **state)
 	FtsResponse mockresponse;
 	CdbComponentDatabaseInfo *entry_db_info;
 	LargestIntegralType dbids[2] = {1, 8};
-	LargestIntegralType roles[2] = {'p', 'm'};
+	LargestIntegralType roles[2] = {GP_SEGMENT_CONFIGURATION_ROLE_PRIMARY,
+									GP_SEGMENT_CONFIGURATION_ROLE_MIRROR};
 	LargestIntegralType issegmentalive[2] = {true, false};
 
 	/* set up response to say standby is down */
@@ -1458,13 +1460,13 @@ test_updateMasterStandbyStatus_checkStandby_up_to_down(void **state)
 		sizeof(CdbComponentDatabaseInfo) * 2);
 	entry_db_info[0].dbid = 1;
 	entry_db_info[0].segindex = MASTER_CONTENT_ID;
-	entry_db_info[0].role = 'p';
+	entry_db_info[0].role = GP_SEGMENT_CONFIGURATION_ROLE_PRIMARY;
 	entry_db_info[0].mode = GP_SEGMENT_CONFIGURATION_MODE_INSYNC;
 	entry_db_info[0].status = GP_SEGMENT_CONFIGURATION_STATUS_UP;
 
 	entry_db_info[1].dbid = 8;
 	entry_db_info[1].segindex = MASTER_CONTENT_ID;
-	entry_db_info[1].role = 'm';
+	entry_db_info[1].role = GP_SEGMENT_CONFIGURATION_ROLE_MIRROR;
 	entry_db_info[1].mode = GP_SEGMENT_CONFIGURATION_MODE_INSYNC;
 	entry_db_info[1].status = GP_SEGMENT_CONFIGURATION_STATUS_UP;
 
@@ -1489,7 +1491,8 @@ test_updateMasterStandbyStatus_checkStandby_no_update(void **state)
 	FtsResponse mockresponse;
 	CdbComponentDatabaseInfo *entry_db_info;
 	LargestIntegralType dbids[2] = {1, 8};
-	LargestIntegralType roles[2] = {'p', 'm'};
+	LargestIntegralType roles[2] = {GP_SEGMENT_CONFIGURATION_ROLE_PRIMARY,
+									GP_SEGMENT_CONFIGURATION_ROLE_MIRROR};
 	LargestIntegralType issegmentalive[2] = {true, false};
 
 	/* set up response to say standby is up */
@@ -1508,13 +1511,13 @@ test_updateMasterStandbyStatus_checkStandby_no_update(void **state)
 		sizeof(CdbComponentDatabaseInfo) * 2);
 	entry_db_info[0].dbid = 1;
 	entry_db_info[0].segindex = MASTER_CONTENT_ID;
-	entry_db_info[0].role = 'p';
+	entry_db_info[0].role = GP_SEGMENT_CONFIGURATION_ROLE_PRIMARY;
 	entry_db_info[0].mode = GP_SEGMENT_CONFIGURATION_MODE_INSYNC;
 	entry_db_info[0].status = GP_SEGMENT_CONFIGURATION_STATUS_UP;
 
 	entry_db_info[1].dbid = 8;
 	entry_db_info[1].segindex = MASTER_CONTENT_ID;
-	entry_db_info[1].role = 'm';
+	entry_db_info[1].role = GP_SEGMENT_CONFIGURATION_ROLE_MIRROR;
 	entry_db_info[1].mode = GP_SEGMENT_CONFIGURATION_MODE_INSYNC;
 	entry_db_info[1].status = GP_SEGMENT_CONFIGURATION_STATUS_UP;
 

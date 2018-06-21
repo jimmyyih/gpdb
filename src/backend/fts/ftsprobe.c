@@ -1321,7 +1321,7 @@ updateMasterStandbyStatus(CdbComponentDatabaseInfo *entry_db_info)
 	if (standby_master_mode == '\0')
 	{
 		/* standby master was deleted or did not exist */
-		if (master_mode == 's')
+		if (master_mode == GP_SEGMENT_CONFIGURATION_MODE_INSYNC)
 		{
 			ResourceOwner save = CurrentResourceOwner;
 			StartTransactionCommand();
