@@ -1234,7 +1234,6 @@ ExecuteTruncate(TruncateStmt *stmt)
 		 * Reconstruct the indexes to match, and we're done.
 		 */
 		reindex_relation(RelationGetRelid(rel), true);
-		heap_close(rel, NoLock);
 	}
 
 	if (Gp_role == GP_ROLE_DISPATCH)
@@ -1263,7 +1262,30 @@ ExecuteTruncate(TruncateStmt *stmt)
 							   GetUserId(),
 							   "TRUNCATE", "");
 		}
+	}
 
+	/* And close the rels */
+	foreach(cell, rels)
+	{
+		Relation	rel = (Relation) lfirst(cell);
+
+		if ((RelationIsAoRows(rel) || RelationIsAoCols(rel)) &&
+			GpIdentity.segindex == MASTER_CONTENT_ID)
+		{
+			/*
+			 * Drop the shared memory hash table entry for this table if it
+			 * exists. We must do so since before the rewrite we probably have few
+			 * non-zero segfile entries for this table while after the rewrite
+			 * only segno zero will be full and the others will be empty. By
+			 * dropping the hash entry we force refreshing the entry from the
+			 * catalog the next time a write into this AO table comes along.
+			 */
+			LWLockAcquire(AOSegFileLock, LW_EXCLUSIVE);
+			AORelRemoveHashEntry(RelationGetRelid(rel));
+			LWLockRelease(AOSegFileLock);
+		}
+
+		heap_close(rel, NoLock);
 	}
 }
 
