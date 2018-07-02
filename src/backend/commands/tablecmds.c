@@ -625,7 +625,8 @@ DefineRelation(CreateStmt *stmt, char relkind, char relstorage, bool dispatch)
 										  allowSystemTableModsDDL,
 										  valid_opts,
 										  &persistentTid,
-										  &persistentSerialNum);
+										  &persistentSerialNum,
+										  stmt->is_part_child);
 
 	StoreCatalogInheritance(relationId, stmt->inhOids);
 
