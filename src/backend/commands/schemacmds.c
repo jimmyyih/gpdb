@@ -272,6 +272,9 @@ RemoveSchema(List *names, DropBehavior behavior, bool missing_ok)
 						namespaceName)));
 	}
 
+	/* Lock namespace to prevent concurrent object creation inside the namespace */
+	LockDatabaseObject(NamespaceRelationId, namespaceId, 0, AccessExclusiveLock);
+
 	/*
 	 * Do the deletion.  Objects contained in the schema are removed by means
 	 * of their dependency links to the schema.

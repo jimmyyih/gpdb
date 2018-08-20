@@ -1,0 +1,118 @@
+-- Test that dropping a new empty schema while concurrently creating
+-- objects in that schema blocks the DROP SCHEMA. Each DROP SCHEMA in
+-- this test should block trying to obtain AccessExclusiveLock on its
+-- corresponding pg_namespace entry.
+
+CREATE SCHEMA concurrent_schema_drop1;
+CREATE
+CREATE SCHEMA concurrent_schema_drop2;
+CREATE
+CREATE SCHEMA concurrent_schema_drop3;
+CREATE
+CREATE SCHEMA concurrent_schema_drop4;
+CREATE
+CREATE SCHEMA concurrent_schema_drop5;
+CREATE
+CREATE SCHEMA concurrent_schema_drop6;
+CREATE
+
+-- Test on CREATE TABLE
+1: BEGIN;
+BEGIN
+1: CREATE TABLE concurrent_schema_drop1.concurrent_schema_drop1_table(a int);
+CREATE
+2&: DROP SCHEMA concurrent_schema_drop1;  <waiting ...>
+1: COMMIT;
+COMMIT
+2<:  <... completed>
+ERROR:  cannot drop schema concurrent_schema_drop1 because other objects depend on it
+HINT:  Use DROP ... CASCADE to drop the dependent objects too.
+1: SELECT * FROM concurrent_schema_drop1.concurrent_schema_drop1_table;
+a
+-
+(0 rows)
+
+-- Test on CREATE TYPE
+1: BEGIN;
+BEGIN
+1: CREATE TYPE concurrent_schema_drop2.concurrent_schema_drop2_type;
+CREATE
+2&: DROP SCHEMA concurrent_schema_drop2;  <waiting ...>
+1: COMMIT;
+COMMIT
+2<:  <... completed>
+ERROR:  cannot drop schema concurrent_schema_drop2 because other objects depend on it
+HINT:  Use DROP ... CASCADE to drop the dependent objects too.
+1: SELECT typname FROM pg_type WHERE typname = 'concurrent_schema_drop2_type';
+typname                     
+----------------------------
+concurrent_schema_drop2_type
+(1 row)
+
+1: BEGIN;
+BEGIN
+1: CREATE TYPE concurrent_schema_drop3.concurrent_schema_drop3_composite_type AS (r double precision, i double precision);
+CREATE
+2&: DROP SCHEMA concurrent_schema_drop3;  <waiting ...>
+1: COMMIT;
+COMMIT
+2<:  <... completed>
+ERROR:  cannot drop schema concurrent_schema_drop3 because other objects depend on it
+HINT:  Use DROP ... CASCADE to drop the dependent objects too.
+1: SELECT typname FROM pg_type WHERE typname = 'concurrent_schema_drop3_composite_type';
+typname                               
+--------------------------------------
+concurrent_schema_drop3_composite_type
+(1 row)
+
+-- Test on CREATE VIEW
+1: BEGIN;
+BEGIN
+1: CREATE VIEW concurrent_schema_drop4.concurrent_schema_drop4_view AS SELECT 1;
+CREATE
+2&: DROP SCHEMA concurrent_schema_drop4;  <waiting ...>
+1: COMMIT;
+COMMIT
+2<:  <... completed>
+ERROR:  cannot drop schema concurrent_schema_drop4 because other objects depend on it
+HINT:  Use DROP ... CASCADE to drop the dependent objects too.
+1: SELECT * FROM concurrent_schema_drop4.concurrent_schema_drop4_view;
+?column?
+--------
+1       
+(1 row)
+
+-- Test on CREATE FUNCTION
+1: BEGIN;
+BEGIN
+1: CREATE FUNCTION concurrent_schema_drop5.concurrent_schema_drop5_func() RETURNS bool LANGUAGE SQL AS 'SELECT true';
+CREATE
+2&: DROP SCHEMA concurrent_schema_drop5;  <waiting ...>
+1: COMMIT;
+COMMIT
+2<:  <... completed>
+ERROR:  cannot drop schema concurrent_schema_drop5 because other objects depend on it
+HINT:  Use DROP ... CASCADE to drop the dependent objects too.
+1: SELECT concurrent_schema_drop5.concurrent_schema_drop5_func();
+concurrent_schema_drop5_func
+----------------------------
+t                           
+(1 row)
+
+-- Test on ALTER TABLE .. SET SCHEMA
+1: CREATE TABLE concurrent_schema_drop6_table(a int);
+CREATE
+1: BEGIN;
+BEGIN
+1: ALTER TABLE concurrent_schema_drop6_table SET SCHEMA concurrent_schema_drop6;
+ALTER
+2&: DROP SCHEMA concurrent_schema_drop6;  <waiting ...>
+1: COMMIT;
+COMMIT
+2<:  <... completed>
+ERROR:  cannot drop schema concurrent_schema_drop6 because other objects depend on it
+HINT:  Use DROP ... CASCADE to drop the dependent objects too.
+1: SELECT * FROM concurrent_schema_drop6.concurrent_schema_drop6_table;
+a
+-
+(0 rows)

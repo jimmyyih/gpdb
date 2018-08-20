@@ -139,6 +139,9 @@ DefineType(List *names, List *parameters)
 	/* Convert list of names to a name and namespace */
 	typeNamespace = QualifiedNameGetCreationNamespace(names, &typeName);
 
+	/* Lock the creation namespace to protect against concurrent namespace drop */
+	LockDatabaseObject(NamespaceRelationId, typeNamespace, 0, AccessShareLock);
+
 	/* Check we have creation rights in target namespace */
 	aclresult = pg_namespace_aclcheck(typeNamespace, GetUserId(), ACL_CREATE);
 	if (aclresult != ACLCHECK_OK)

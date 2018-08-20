@@ -1010,6 +1010,9 @@ CreateFunction(CreateFunctionStmt *stmt, const char *queryString)
 	namespaceId = QualifiedNameGetCreationNamespace(stmt->funcname,
 													&funcname);
 
+	/* Lock the creation namespace to protect against concurrent namespace drop */
+	LockDatabaseObject(NamespaceRelationId, namespaceId, 0, AccessShareLock);
+
 	/* Check we have creation rights in target namespace */
 	aclresult = pg_namespace_aclcheck(namespaceId, GetUserId(), ACL_CREATE);
 	if (aclresult != ACLCHECK_OK)
