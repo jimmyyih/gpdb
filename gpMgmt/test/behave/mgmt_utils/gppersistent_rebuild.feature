@@ -37,3 +37,12 @@ Feature: persistent rebuild tests
           | primary |
           | master  |
 
+    Scenario: Persistent rebuild should work on small shared_buffers value
+        Given the database is running
+        And there is a "ao" table "public.ao_part_table" in "bkdb" having "1000" partitions
+        And the user runs "gpconfig -c shared_buffers -v 512kB"
+        And gpconfig should return a return code of 0
+        And the database is restarted
+        And the information of a "primary" segment on any host is saved
+        When run gppersistent_rebuild with the saved content id
+        Then gppersistent_rebuild should return a return code of 0

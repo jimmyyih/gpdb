@@ -1194,9 +1194,12 @@ DatabaseInfo_CollectPgAppendOnly(
 	scan = heap_beginscan(pg_appendonly_rel, SnapshotNow, 0, NULL);
 	while ((tuple = heap_getnext(scan, ForwardScanDirection)) != NULL)
 	{
+		HeapTuple aoTuple;
 		Form_pg_appendonly aoEntry;
 
-		aoEntry = (Form_pg_appendonly) GETSTRUCT(tuple);
+		/* Copy the tuple from shared buffer */
+		aoTuple = heap_copytuple(tuple);
+		aoEntry = (Form_pg_appendonly) GETSTRUCT(aoTuple);
 
 		Assert(aoEntry != NULL);
 
@@ -1208,7 +1211,8 @@ DatabaseInfo_CollectPgAppendOnly(
 			elog(Persistent_DebugPrintLevel(), 
 				 "DatabaseInfo_Collect: Append-Only entry for relation id %u, "
 				 "blocksize %d, safefswritesize %d, compresslevel %d, "
-				 " checksum %s, compresstype %s, columnstore %s, segrelid %u, blkdirrelid %u, blkdiridxid %u",
+				 "checksum %s, compresstype %s, columnstore %s, segrelid %u, blkdirrelid %u, blkdiridxid %u, "
+				 "visimaprelid %u, visimapidxid %u",
 				 aoEntry->relid,
 				 aoEntry->blocksize,
 				 aoEntry->safefswritesize,
@@ -1218,7 +1222,9 @@ DatabaseInfo_CollectPgAppendOnly(
 				 (aoEntry->columnstore ? "true" : "false"),
 				 aoEntry->segrelid,
 				 aoEntry->blkdirrelid,
-				 aoEntry->blkdiridxid);
+				 aoEntry->blkdiridxid,
+				 aoEntry->visimaprelid,
+				 aoEntry->visimapidxid);
 
 		DatabaseInfo_AddPgAppendOnly(
 								pgAppendOnlyHashTable,

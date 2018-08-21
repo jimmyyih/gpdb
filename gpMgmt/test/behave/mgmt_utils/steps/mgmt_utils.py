@@ -2152,6 +2152,7 @@ def impl(context, table_type, table_name, db_name, num_partitions):
     if not num_partitions.strip().isdigit():
         raise Exception('Invalid number of partitions specified "%s"' % num_partitions)
 
+    create_database_if_not_exists(context, db_name)
     num_partitions = int(num_partitions.strip()) + 1
     create_large_num_partitions(table_type, table_name, db_name, num_partitions)
 
@@ -3689,7 +3690,7 @@ def impl(context, file, path):
     raise Exception('File was not found in :' + path)
 
 
-@then('database is restarted to kill the hung query')
+@given('the database is restarted')
 def impl(context):
     try:
         stop_database_if_started(context)
@@ -3701,7 +3702,7 @@ def impl(context):
         raise Exception('Failed to stop the database')
 
     start_database_if_not_started(context)
-    if not check_database_is_running():
+    if not check_database_is_running(context):
         raise Exception('Failed to start the database')
 
 
