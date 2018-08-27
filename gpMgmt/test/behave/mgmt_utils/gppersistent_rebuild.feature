@@ -40,6 +40,7 @@ Feature: persistent rebuild tests
     Scenario: Persistent rebuild should work on small shared_buffers value
         Given the database is running
         And there is a "ao" table "public.ao_part_table" in "bkdb" having "1000" partitions
+        And the standby master has finished replaying
         And the user runs "gpconfig -c shared_buffers -v 512kB"
         And gpconfig should return a return code of 0
         And the database is restarted

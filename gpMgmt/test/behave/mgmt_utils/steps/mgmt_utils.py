@@ -3689,6 +3689,23 @@ def impl(context, file, path):
 
     raise Exception('File was not found in :' + path)
 
+@given('the standby master has finished replaying')
+def impl(context):
+    # We set the timeout value to 10 minutes (1200 half-seconds)
+    # because replay on continuous integration containers can be slow
+    # from heavy resource contention
+    timeout = 1200
+    while (timeout > 0):
+        # We do not use dbconn because it runs begin/commit which creates a transaction log
+        check_replay = "SELECT 'standby is fully replayed' FROM pg_stat_replication WHERE sent_location = replay_location"
+        result = subprocess.check_output('psql postgres -c "%s"' % check_replay, shell=True)
+        if 'standby is fully replayed' in result:
+            return
+        else:
+            timeout = timeout - 1
+            sleep(0.5)
+
+    raise Exception('Standby master has not fully replayed yet')
 
 @given('the database is restarted')
 def impl(context):
