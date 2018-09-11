@@ -588,10 +588,12 @@ BEGIN
         -- append only table
 
         FOR skewrec IN
-            SELECT $1, segid, COALESCE(tupcount, 0)::bigint AS cnt
-            FROM (SELECT generate_series(0, numsegments - 1) FROM gp_toolkit.__gp_number_of_segments) segs(segid)
-            LEFT OUTER JOIN pg_catalog.get_ao_distribution($1)
-            ON segid = segmentid
+    select $1, gp_segment_id as segid, sum(total - hidden)::bigint as cnt from (
+      select gp_segment_id,
+        (gp_toolkit.__gp_aovisimap_hidden_typed($1)::gp_toolkit.__gp_aovisimap_hidden_t).hidden,
+        (gp_toolkit.__gp_aovisimap_hidden_typed($1)::gp_toolkit.__gp_aovisimap_hidden_t).total
+      from gp_dist_random('gp_id') as (seg int, hidden bigint, total bigint)
+    ) a group by 2
         LOOP
             RETURN NEXT skewrec;
         END LOOP;
