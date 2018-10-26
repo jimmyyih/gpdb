@@ -389,7 +389,7 @@ checkDispatchResult(CdbDispatcherState *ds,
 	int			timeout = 0;
 	bool		sentSignal = false;
 	struct pollfd *fds;
-	uint8 ftsVersion = 0;
+	uint8 ftsSegmentFailoverOccurrence = 0;
 
 	db_count = pParms->dispatchCount;
 	fds = (struct pollfd *) palloc(db_count * sizeof(struct pollfd));
@@ -534,9 +534,9 @@ checkDispatchResult(CdbDispatcherState *ds,
 			 * explicitly in this case because this happens every
 			 * DISPATCH_WAIT_TIMEOUT_MSEC.
 			 */
-			if (ftsVersion == 0 || ftsVersion != getFtsVersion())
+			if (ftsSegmentFailoverOccurrence == 0 || ftsSegmentFailoverOccurrence != getFtsSegmentFailoverOccurrence())
 			{
-				ftsVersion = getFtsVersion();
+				ftsSegmentFailoverOccurrence = getFtsSegmentFailoverOccurrence();
 				checkSegmentAlive(pParms);
 			}
 

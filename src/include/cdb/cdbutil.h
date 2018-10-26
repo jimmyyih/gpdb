@@ -112,7 +112,7 @@ struct CdbComponentDatabases
 	int			my_dbid;		/* the dbid of this database */
 	int			my_segindex;	/* the content of this database */
 	bool		my_isprimary;	/* the isprimary flag of this database */
-	uint8		fts_version;	/* the version of fts */
+	uint8		fts_segment_failover_occurrence;	/* the segment_failover_occurrence of fts */
 	int			expand_version;
 	int			numActiveQEs;
 	int			numIdleQEs;

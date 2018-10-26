@@ -154,7 +154,7 @@ FtsTestSegmentDBIsDown(SegmentDatabaseDescriptor **segdbDesc, int size)
 }
 
 uint8
-getFtsVersion(void)
+getFtsSegmentFailoverOccurrence(void)
 {
 	return ftsProbeInfo->segment_failover_occurrence;
 }

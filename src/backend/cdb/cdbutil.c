@@ -538,7 +538,7 @@ cdbcomponent_cleanupIdleQEs(bool includeWriter)
 void
 cdbcomponent_updateCdbComponents(void)
 {
-	uint8 ftsVersion= getFtsVersion();
+	uint8 ftsSegmentFailoverOccurrence = getFtsSegmentFailoverOccurrence();
 	int expandVersion = GetGpExpandVersion();
 
 	PG_TRY();
@@ -546,10 +546,10 @@ cdbcomponent_updateCdbComponents(void)
 		if (cdb_component_dbs == NULL)
 		{
 			cdb_component_dbs = getCdbComponentInfo(true);
-			cdb_component_dbs->fts_version = ftsVersion;
+			cdb_component_dbs->fts_segment_failover_occurrence = ftsSegmentFailoverOccurrence;
 			cdb_component_dbs->expand_version = GetGpExpandVersion();
 		}
-		else if ((cdb_component_dbs->fts_version != ftsVersion ||
+		else if ((cdb_component_dbs->fts_segment_failover_occurrence != ftsSegmentFailoverOccurrence ||
 				 cdb_component_dbs->expand_version != expandVersion))
 		{
 			if (TempNamespaceOidIsValid())
@@ -564,7 +564,7 @@ cdbcomponent_updateCdbComponents(void)
 				ELOG_DISPATCHER_DEBUG("FTS rescanned, get new component databases info.");
 				cdbcomponent_destroyCdbComponents();
 				cdb_component_dbs = getCdbComponentInfo(true);
-				cdb_component_dbs->fts_version = ftsVersion;
+				cdb_component_dbs->fts_segment_failover_occurrence = ftsSegmentFailoverOccurrence;
 				cdb_component_dbs->expand_version = expandVersion;
 			}
 		}
@@ -595,7 +595,7 @@ cdbcomponent_getCdbComponents(bool DNSLookupAsError)
 		if (cdb_component_dbs == NULL)
 		{
 			cdb_component_dbs = getCdbComponentInfo(DNSLookupAsError);
-			cdb_component_dbs->fts_version = getFtsVersion();
+			cdb_component_dbs->fts_segment_failover_occurrence = getFtsSegmentFailoverOccurrence();
 			cdb_component_dbs->expand_version = GetGpExpandVersion();
 		}
 	}
