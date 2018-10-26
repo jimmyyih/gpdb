@@ -642,7 +642,7 @@ test_processResponse_for_FtsIsActive_false(void **state)
  * state changed.
  */
 void
-test_PrimayUpMirrorUpNotInSync_to_PrimayUpMirrorUpNotInSync(void **state)
+test_PrimaryUpMirrorUpNotInSync_to_PrimaryUpMirrorUpNotInSync(void **state)
 {
 	CdbComponentDatabases *cdbs = InitTestCdb(
 		2, true, GP_SEGMENT_CONFIGURATION_MODE_NOTINSYNC);
@@ -680,7 +680,7 @@ test_PrimayUpMirrorUpNotInSync_to_PrimayUpMirrorUpNotInSync(void **state)
  * current primary needs to stay marked as up.
  */
 void
-test_PrimayUpMirrorUpNotInSync_to_PrimaryDown(void **state)
+test_PrimaryUpMirrorUpNotInSync_to_PrimaryDown(void **state)
 {
 	CdbComponentDatabases *cdbs = InitTestCdb(
 		2, true, GP_SEGMENT_CONFIGURATION_MODE_NOTINSYNC);
@@ -717,7 +717,7 @@ test_PrimayUpMirrorUpNotInSync_to_PrimaryDown(void **state)
  * 2 segments, content 0 mirror is updated as down
  */
 void
-test_PrimayUpMirrorUpNotInSync_to_PrimaryUpMirrorDownNotInSync(void **state)
+test_PrimaryUpMirrorUpNotInSync_to_PrimaryUpMirrorDownNotInSync(void **state)
 {
 	CdbComponentDatabases *cdbs = InitTestCdb(
 		2, true, GP_SEGMENT_CONFIGURATION_MODE_NOTINSYNC);
@@ -768,7 +768,7 @@ test_PrimayUpMirrorUpNotInSync_to_PrimaryUpMirrorDownNotInSync(void **state)
  * 3 segments, content 0 mirror is down and probe response is mirror up
  */
 void
-test_PrimaryUpMirrorDownNotInSync_to_PrimayUpMirrorUpNotInSync(void **state)
+test_PrimaryUpMirrorDownNotInSync_to_PrimaryUpMirrorUpNotInSync(void **state)
 {
 	CdbComponentDatabases *cdbs = InitTestCdb(
 		3, true, GP_SEGMENT_CONFIGURATION_MODE_NOTINSYNC);
@@ -973,7 +973,7 @@ test_processResponse_multiple_segments(void **state)
  * 1 segment, primary and mirror will be marked not in sync
  */
 void
-test_PrimayUpMirrorUpSync_to_PrimaryUpMirrorUpNotInSync(void **state)
+test_PrimaryUpMirrorUpSync_to_PrimaryUpMirrorUpNotInSync(void **state)
 {
 	CdbComponentDatabases *cdbs = InitTestCdb(
 		1, true, GP_SEGMENT_CONFIGURATION_MODE_INSYNC);
@@ -1019,7 +1019,7 @@ test_PrimayUpMirrorUpSync_to_PrimaryUpMirrorUpNotInSync(void **state)
  * for first primary mirror pair
  */
 void
-test_PrimayUpMirrorUpSync_to_PrimaryUpMirrorDownNotInSync(void **state)
+test_PrimaryUpMirrorUpSync_to_PrimaryUpMirrorDownNotInSync(void **state)
 {
 	CdbComponentDatabases *cdbs = InitTestCdb(
 		2, true, GP_SEGMENT_CONFIGURATION_MODE_INSYNC);
@@ -1079,7 +1079,7 @@ test_PrimayUpMirrorUpSync_to_PrimaryUpMirrorDownNotInSync(void **state)
  * both will be marked not in sync, then FTS promote mirror
  */
 void
-test_PrimayUpMirrorUpSync_to_PrimaryDown_to_MirrorPromote(void **state)
+test_PrimaryUpMirrorUpSync_to_PrimaryDown_to_MirrorPromote(void **state)
 {
 	CdbComponentDatabases *cdbs = InitTestCdb(
 		1, true, GP_SEGMENT_CONFIGURATION_MODE_INSYNC);
@@ -1127,7 +1127,7 @@ test_PrimayUpMirrorUpSync_to_PrimaryDown_to_MirrorPromote(void **state)
  * 1 segment, primary and mirror will be marked in sync
  */
 void
-test_PrimayUpMirrorUpNotInSync_to_PrimayUpMirrorUpSync(void **state)
+test_PrimaryUpMirrorUpNotInSync_to_PrimaryUpMirrorUpSync(void **state)
 {
 	CdbComponentDatabases *cdbs = InitTestCdb(
 		1, true, GP_SEGMENT_CONFIGURATION_MODE_NOTINSYNC);
@@ -1173,7 +1173,7 @@ test_PrimayUpMirrorUpNotInSync_to_PrimayUpMirrorUpSync(void **state)
  * updated to SYNC
  */
 void
-test_PrimaryUpMirrorDownNotInSync_to_PrimayUpMirrorUpSync(void **state)
+test_PrimaryUpMirrorDownNotInSync_to_PrimaryUpMirrorUpSync(void **state)
 {
 	CdbComponentDatabases *cdbs = InitTestCdb(
 		1, true, GP_SEGMENT_CONFIGURATION_MODE_NOTINSYNC);
@@ -1225,7 +1225,7 @@ test_PrimaryUpMirrorDownNotInSync_to_PrimayUpMirrorUpSync(void **state)
  * 1 segment, segment_failover is false because there is no status or mode change.
  */
 void
-test_PrimaryUpMirrorDownNotInSync_to_PrimayUpMirrorDownNotInSync(void **state)
+test_PrimaryUpMirrorDownNotInSync_to_PrimaryUpMirrorDownNotInSync(void **state)
 {
 	CdbComponentDatabases *cdbs = InitTestCdb(
 		1, true, GP_SEGMENT_CONFIGURATION_MODE_NOTINSYNC);
@@ -1376,18 +1376,18 @@ main(int argc, char* argv[])
 		unit_test(test_processResponse_for_zero_segment),
 		unit_test(test_processResponse_for_FtsIsActive_false),
 		unit_test(test_processResponse_multiple_segments),
-		unit_test(test_PrimayUpMirrorUpSync_to_PrimaryUpMirrorUpNotInSync),
-		unit_test(test_PrimayUpMirrorUpSync_to_PrimaryUpMirrorDownNotInSync),
-		unit_test(test_PrimayUpMirrorUpSync_to_PrimaryDown_to_MirrorPromote),
+		unit_test(test_PrimaryUpMirrorUpSync_to_PrimaryUpMirrorUpNotInSync),
+		unit_test(test_PrimaryUpMirrorUpSync_to_PrimaryUpMirrorDownNotInSync),
+		unit_test(test_PrimaryUpMirrorUpSync_to_PrimaryDown_to_MirrorPromote),
 
-		unit_test(test_PrimayUpMirrorUpNotInSync_to_PrimayUpMirrorUpSync),
-		unit_test(test_PrimayUpMirrorUpNotInSync_to_PrimayUpMirrorUpNotInSync),
-		unit_test(test_PrimayUpMirrorUpNotInSync_to_PrimaryUpMirrorDownNotInSync),
-		unit_test(test_PrimayUpMirrorUpNotInSync_to_PrimaryDown),
+		unit_test(test_PrimaryUpMirrorUpNotInSync_to_PrimaryUpMirrorUpSync),
+		unit_test(test_PrimaryUpMirrorUpNotInSync_to_PrimaryUpMirrorUpNotInSync),
+		unit_test(test_PrimaryUpMirrorUpNotInSync_to_PrimaryUpMirrorDownNotInSync),
+		unit_test(test_PrimaryUpMirrorUpNotInSync_to_PrimaryDown),
 
-		unit_test(test_PrimaryUpMirrorDownNotInSync_to_PrimayUpMirrorUpSync),
-		unit_test(test_PrimaryUpMirrorDownNotInSync_to_PrimayUpMirrorUpNotInSync),
-		unit_test(test_PrimaryUpMirrorDownNotInSync_to_PrimayUpMirrorDownNotInSync),
+		unit_test(test_PrimaryUpMirrorDownNotInSync_to_PrimaryUpMirrorUpSync),
+		unit_test(test_PrimaryUpMirrorDownNotInSync_to_PrimaryUpMirrorUpNotInSync),
+		unit_test(test_PrimaryUpMirrorDownNotInSync_to_PrimaryUpMirrorDownNotInSync),
 		unit_test(test_PrimaryUpMirrorDownNotInSync_to_PrimaryDown),
 		unit_test(test_probeTimeout),
 		/*-----------------------------------------------------------------------*/
