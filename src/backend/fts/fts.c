@@ -376,8 +376,8 @@ CdbComponentDatabases *readCdbComponentInfoAndUpdateStatus(MemoryContext probeCo
 	 * Initialize fts_stausVersion after populating the config details in
 	 * shared memory for the first time after FTS startup.
 	 */
-	if (ftsProbeInfo->fts_statusVersion == 0)
-		ftsProbeInfo->fts_statusVersion++;
+	if (ftsProbeInfo->segment_failover_occurrence == 0)
+		ftsProbeInfo->segment_failover_occurrence++;
 
 	return cdbs;
 }
@@ -486,7 +486,6 @@ probeWalRepUpdateConfig(int16 dbid, int16 segindex, char role,
 static
 void FtsLoop()
 {
-	bool	updated_probe_state;
 	MemoryContext probeContext = NULL, oldContext = NULL;
 	time_t elapsed,	probe_start_time;
 	CdbComponentDatabases *cdbs = NULL;
@@ -552,16 +551,21 @@ void FtsLoop()
 			 */
 			oldContext = MemoryContextSwitchTo(probeContext);
 
-			updated_probe_state = FtsWalRepMessageSegments(cdbs);
+			FtsWalRepMessageSegments(cdbs);
 
 			MemoryContextSwitchTo(oldContext);
 
 			/* free any pallocs we made inside probeSegments() */
 			MemoryContextReset(probeContext);
 
-			/* Bump the version if configuration was updated. */
-			if (updated_probe_state)
-				ftsProbeInfo->fts_statusVersion++;
+			/*
+			 * If segment failover occurred, bump the counter so that the
+			 * dispatcher processes are notified to reset their gang to use
+			 * the promoted mirror instead of the unreachable/unstable
+			 * primary.
+			 */
+			if (segment_failover_occurred())
+				ftsProbeInfo->segment_failover_occurrence++;
 		}
 
 		/* free current components info and free ip addr caches */	

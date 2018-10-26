@@ -33,6 +33,13 @@
 
 
 static struct pollfd *PollFds;
+static bool segment_failover = false;
+
+bool
+segment_failover_occurred(void)
+{
+	return segment_failover;
+}
 
 static CdbComponentDatabaseInfo *
 FtsGetPeerSegment(CdbComponentDatabases *cdbs,
@@ -951,11 +958,9 @@ updateConfiguration(CdbComponentDatabaseInfo *primary,
  * (e.g. promotion and turning off syncrep).
  * (b) Update gp_segment_configuration catalog table, if needed.
  */
-static bool
+static void
 processResponse(fts_context *context)
 {
-	bool is_updated = false;
-
 	for (int response_index = 0;
 		 response_index < context->num_pairs && FtsIsActive();
 		 response_index ++)
@@ -1002,7 +1007,7 @@ processResponse(fts_context *context)
 						 * Primaries that have syncrep enabled continue to block
 						 * commits until FTS update the mirror status as down.
 						 */
-						is_updated |= updateConfiguration(
+						updateConfiguration(
 							primary, mirror,
 							GP_SEGMENT_CONFIGURATION_ROLE_PRIMARY,
 							GP_SEGMENT_CONFIGURATION_ROLE_MIRROR,
@@ -1011,7 +1016,7 @@ processResponse(fts_context *context)
 						 * If mirror was marked up in configuration, it must have
 						 * been marked down by updateConfiguration().
 						 */
-						AssertImply(SEGMENT_IS_ALIVE(mirror), is_updated);
+						Assert(SEGMENT_IS_ALIVE(mirror));
 						/*
 						 * Now that the configuration is updated, FTS must notify
 						 * the primaries to unblock commits by sending syncrep off
@@ -1055,7 +1060,7 @@ processResponse(fts_context *context)
 					 * from down to up, mode found to change from not in-sync
 					 * to in-sync or syncrep found to change from off to on.
 					 */
-					is_updated |= updateConfiguration(
+					updateConfiguration(
 						primary, mirror,
 						GP_SEGMENT_CONFIGURATION_ROLE_PRIMARY,
 						GP_SEGMENT_CONFIGURATION_ROLE_MIRROR,
@@ -1096,12 +1101,12 @@ processResponse(fts_context *context)
 					 * for gang creation, FTS should no longer probe the failed
 					 * primary.
 					 */
-					is_updated |= updateConfiguration(
+					segment_failover |= updateConfiguration(
 						primary, mirror,
 						GP_SEGMENT_CONFIGURATION_ROLE_MIRROR, /* newPrimaryRole */
 						GP_SEGMENT_CONFIGURATION_ROLE_PRIMARY, /* newMirrorRole */
 						IsInSync, IsPrimaryAlive, IsMirrorAlive);
-					Assert(is_updated);
+					Assert(segment_failover);
 
 					/*
 					 * Swap the primary and mirror references so that the
@@ -1166,8 +1171,6 @@ processResponse(fts_context *context)
 		ftsInfo->poll_events = ftsInfo->poll_revents = 0;
 		ftsInfo->retry_count = 0;
 	}
-
-	return is_updated;
 }
 
 #ifdef USE_ASSERT_CHECKING
@@ -1191,6 +1194,7 @@ FtsIsSegmentAlive(CdbComponentDatabaseInfo *segInfo)
 static void
 FtsWalRepInitProbeContext(CdbComponentDatabases *cdbs, fts_context *context)
 {
+	segment_failover = false;
 	context->num_pairs = cdbs->total_segments;
 	context->perSegInfos = (fts_segment_info *) palloc0(
 		context->num_pairs * sizeof(fts_segment_info));
@@ -1249,10 +1253,9 @@ InitPollFds(size_t size)
 	PollFds = (struct pollfd *) palloc0(size * sizeof(struct pollfd));
 }
 
-bool
+void
 FtsWalRepMessageSegments(CdbComponentDatabases *cdbs)
 {
-	bool is_updated = false;
 	fts_context context;
 
 	FtsWalRepInitProbeContext(cdbs, &context);
@@ -1265,7 +1268,7 @@ FtsWalRepMessageSegments(CdbComponentDatabases *cdbs)
 		ftsSend(&context);
 		ftsReceive(&context);
 		processRetry(&context);
-		is_updated |= processResponse(&context);
+		processResponse(&context);
 	}
 	int i;
 	if (!FtsIsActive())
@@ -1298,7 +1301,6 @@ FtsWalRepMessageSegments(CdbComponentDatabases *cdbs)
 #endif
 	pfree(context.perSegInfos);
 	pfree(PollFds);
-	return is_updated;
 }
 
 /* EOF */

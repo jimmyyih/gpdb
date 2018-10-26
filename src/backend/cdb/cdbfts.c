@@ -79,7 +79,7 @@ FtsShmemInit(void)
 		shared->ControlLock = LWLockAssign();
 		ftsControlLock = shared->ControlLock;
 
-		shared->fts_probe_info.fts_statusVersion = 0;
+		shared->fts_probe_info.segment_failover_occurrence = 0;
 	}
 }
 
@@ -156,5 +156,5 @@ FtsTestSegmentDBIsDown(SegmentDatabaseDescriptor **segdbDesc, int size)
 uint8
 getFtsVersion(void)
 {
-	return ftsProbeInfo->fts_statusVersion;
+	return ftsProbeInfo->segment_failover_occurrence;
 }

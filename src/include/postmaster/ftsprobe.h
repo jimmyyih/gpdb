@@ -92,5 +92,6 @@ typedef struct
 	fts_segment_info *perSegInfos;
 } fts_context;
 
-extern bool FtsWalRepMessageSegments(CdbComponentDatabases *context);
+extern bool segment_failover_occurred(void);
+extern void FtsWalRepMessageSegments(CdbComponentDatabases *context);
 #endif

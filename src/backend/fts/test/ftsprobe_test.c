@@ -599,7 +599,7 @@ test_processRetry_wait_before_retry(void **state)
 }
 
 
-/* 0 segments, is_updated is always false */
+/* 0 segments, segment_failover is always false */
 void
 test_processResponse_for_zero_segment(void **state)
 {
@@ -607,13 +607,13 @@ test_processResponse_for_zero_segment(void **state)
 
 	context.num_pairs = 0;
 
-	bool is_updated = processResponse(&context);
+	processResponse(&context);
 
-	assert_false(is_updated);
+	assert_false(segment_failover);
 }
 
 /*
- * 1 segment, is_updated is false, because FtsIsActive failed
+ * 1 segment, segment_failover is false because FtsIsActive failed
  */
 void
 test_processResponse_for_FtsIsActive_false(void **state)
@@ -631,14 +631,14 @@ test_processResponse_for_FtsIsActive_false(void **state)
 	/* mock FtsIsActive false */
 	will_return(FtsIsActive, false);
 
-	bool is_updated = processResponse(&context);
+	processResponse(&context);
 
-	assert_false(is_updated);
+	assert_false(segment_failover);
 	assert_true(context.perSegInfos[0].state == FTS_PROBE_SUCCESS);
 }
 
 /*
- * 2 segments, is_updated is false, because neither primary nor mirror
+ * 2 segments, segment_failover is false because neither primary nor mirror
  * state changed.
  */
 void
@@ -665,17 +665,17 @@ test_PrimayUpMirrorUpNotInSync_to_PrimayUpMirrorUpNotInSync(void **state)
 	expect_value(PQfinish, conn, context.perSegInfos[1].conn);
 	will_be_called(PQfinish);
 
-	/* processResponse should not update a probe state */
-	bool is_updated = processResponse(&context);
+
+	processResponse(&context);	/* processResponse should not update a probe state */
 
 	/* Active connections must be closed after processing response. */
 	assert_true(context.perSegInfos[0].conn == NULL);
 	assert_true(context.perSegInfos[1].conn == NULL);
-	assert_false(is_updated);
+	assert_false(segment_failover);
 }
 
 /*
- * 2 segments, is_updated is false, because its double fault scenario
+ * 2 segments, segment_failover is false because it is double fault scenario
  * primary and mirror are not in sync hence cannot promote mirror, hence
  * current primary needs to stay marked as up.
  */
@@ -705,16 +705,16 @@ test_PrimayUpMirrorUpNotInSync_to_PrimaryDown(void **state)
 	will_be_called(PQfinish);
 
 	/* No update must happen */
-	bool is_updated = processResponse(&context);
+	processResponse(&context);
 
 	/* Active connections must be closed after processing response. */
 	assert_true(context.perSegInfos[0].conn == NULL);
 	assert_true(context.perSegInfos[1].conn == NULL);
-	assert_false(is_updated);
+	assert_false(segment_failover);
 }
 
 /*
- * 2 segments, is_updated is true, because content 0 mirror is updated
+ * 2 segments, content 0 mirror is updated as down
  */
 void
 test_PrimayUpMirrorUpNotInSync_to_PrimaryUpMirrorDownNotInSync(void **state)
@@ -757,17 +757,15 @@ test_PrimayUpMirrorUpNotInSync_to_PrimaryUpMirrorDownNotInSync(void **state)
 	expect_value(PQfinish, conn, context.perSegInfos[1].conn);
 	will_be_called(PQfinish);
 
-	bool is_updated = processResponse(&context);
+	processResponse(&context);
 
-	assert_true(is_updated);
 	/* Active connections must be closed after processing response. */
 	assert_true(context.perSegInfos[0].conn == NULL);
 	assert_true(context.perSegInfos[1].conn == NULL);
 }
 
 /*
- * 3 segments, is_updated is true, because content 0 mirror is down and
- * probe response is up
+ * 3 segments, content 0 mirror is down and probe response is mirror up
  */
 void
 test_PrimaryUpMirrorDownNotInSync_to_PrimayUpMirrorUpNotInSync(void **state)
@@ -824,9 +822,10 @@ test_PrimaryUpMirrorDownNotInSync_to_PrimayUpMirrorUpNotInSync(void **state)
 	expect_value(PQfinish, conn, context.perSegInfos[2].conn);
 	will_be_called(PQfinish);
 
-	bool is_updated = processResponse(&context);
+	processResponse(&context);
 
-	assert_true(is_updated);
+	assert_false(segment_failover);
+
 	/*
 	 * Assert that connections are closed and the state of the segments is not
 	 * changed (no further messages needed from FTS).
@@ -840,9 +839,9 @@ test_PrimaryUpMirrorDownNotInSync_to_PrimayUpMirrorUpNotInSync(void **state)
 }
 
 /*
- * 5 segments, is_updated is true, as we are changing the state of several
- * segment pairs.  This test also validates that sync-rep off and promotion
- * messages are not blocked by primary retry requests.
+ * 5 segments, segment_failover is true because we are changing the state of
+ * several segment pairs.  This test also validates that sync-rep off and
+ * promotion messages are not blocked by primary retry requests.
  */
 void
 test_processResponse_multiple_segments(void **state)
@@ -954,9 +953,10 @@ test_processResponse_multiple_segments(void **state)
 	expect_value(PQfinish, conn, context.perSegInfos[3].conn);
 	will_be_called(PQfinish);
 
-	bool is_updated = processResponse(&context);
+	processResponse(&context);
 
-	assert_true(is_updated);
+	assert_true(segment_failover);
+
 	/* mirror found up */
 	assert_true(context.perSegInfos[0].state == FTS_RESPONSE_PROCESSED);
 	/* mirror promotion should be triggered */
@@ -970,8 +970,7 @@ test_processResponse_multiple_segments(void **state)
 }
 
 /*
- * 1 segment, is_updated is true, because primary and mirror will be
- * marked not in sync
+ * 1 segment, primary and mirror will be marked not in sync
  */
 void
 test_PrimayUpMirrorUpSync_to_PrimaryUpMirrorUpNotInSync(void **state)
@@ -1008,16 +1007,16 @@ test_PrimayUpMirrorUpSync_to_PrimaryUpMirrorUpNotInSync(void **state)
 	expect_value(PQfinish, conn, context.perSegInfos[0].conn);
 	will_be_called(PQfinish);
 
-	bool is_updated = processResponse(&context);
+	processResponse(&context);
 
-	assert_true(is_updated);
+	assert_false(segment_failover);
 	assert_true(context.perSegInfos[0].state == FTS_RESPONSE_PROCESSED);
 	assert_true(context.perSegInfos[0].conn == NULL);
 }
 
 /*
- * 2 segments, is_updated is true, because mirror will be marked down and
- * both will be marked not in sync for first primary mirror pair
+ * 2 segments, mirror will be marked down and both will be marked not in sync
+ * for first primary mirror pair
  */
 void
 test_PrimayUpMirrorUpSync_to_PrimaryUpMirrorDownNotInSync(void **state)
@@ -1063,9 +1062,10 @@ test_PrimayUpMirrorUpSync_to_PrimaryUpMirrorDownNotInSync(void **state)
 	expect_value(PQfinish, conn, context.perSegInfos[1].conn);
 	will_be_called(PQfinish);
 
-	bool is_updated = processResponse(&context);
+	processResponse(&context);
 
-	assert_true(is_updated);
+	assert_false(segment_failover);
+
 	/* mirror is down but syncrep is enabled, so it must be turned off */
 	assert_true(context.perSegInfos[0].state == FTS_SYNCREP_OFF_SEGMENT);
 	/* no change in config */
@@ -1075,7 +1075,7 @@ test_PrimayUpMirrorUpSync_to_PrimaryUpMirrorDownNotInSync(void **state)
 }
 
 /*
- * 1 segment, is_updated is true, because FTS found primary goes down and
+ * 1 segment, segment_failover is true because FTS found primary goes down and
  * both will be marked not in sync, then FTS promote mirror
  */
 void
@@ -1113,9 +1113,10 @@ test_PrimayUpMirrorUpSync_to_PrimaryDown_to_MirrorPromote(void **state)
 	expect_value(PQfinish, conn, context.perSegInfos[0].conn);
 	will_be_called(PQfinish);
 
-	bool is_updated = processResponse(&context);
+	processResponse(&context);
 
-	assert_true(is_updated);
+	assert_true(segment_failover);
+
 	/* the mirror must be marked for promotion */
 	assert_true(context.perSegInfos[0].state == FTS_PROMOTE_SEGMENT);
 	assert_int_equal(context.perSegInfos[0].primary_cdbinfo->dbid, mirror->dbid);
@@ -1123,8 +1124,7 @@ test_PrimayUpMirrorUpSync_to_PrimaryDown_to_MirrorPromote(void **state)
 }
 
 /*
- * 1 segment, is_updated is true, because primary and mirror will be
- * marked in sync
+ * 1 segment, primary and mirror will be marked in sync
  */
 void
 test_PrimayUpMirrorUpNotInSync_to_PrimayUpMirrorUpSync(void **state)
@@ -1161,16 +1161,16 @@ test_PrimayUpMirrorUpNotInSync_to_PrimayUpMirrorUpSync(void **state)
 	expect_value(PQfinish, conn, context.perSegInfos[0].conn);
 	will_be_called(PQfinish);
 
-	bool is_updated = processResponse(&context);
+	processResponse(&context);
 
-	assert_true(is_updated);
+	assert_false(segment_failover);
 	assert_true(context.perSegInfos[0].state == FTS_RESPONSE_PROCESSED);
 	assert_true(context.perSegInfos[0].conn == NULL);
 }
 
 /*
- * 1 segment, is_updated is true, because mirror will be marked UP and
- * both primary and mirror should get updated to SYNC
+ * 1 segment, mirror will be marked UP and both primary and mirror should get
+ * updated to SYNC
  */
 void
 test_PrimaryUpMirrorDownNotInSync_to_PrimayUpMirrorUpSync(void **state)
@@ -1214,15 +1214,15 @@ test_PrimaryUpMirrorDownNotInSync_to_PrimayUpMirrorUpSync(void **state)
 	expect_value(PQfinish, conn, context.perSegInfos[0].conn);
 	will_be_called(PQfinish);
 
-	bool is_updated = processResponse(&context);
+	processResponse(&context);
 
-	assert_true(is_updated);
+	assert_false(segment_failover);
 	assert_true(context.perSegInfos[0].conn == NULL);
 	assert_true(context.perSegInfos[0].state == FTS_RESPONSE_PROCESSED);
 }
 
 /*
- * 1 segment, is_updated is false, because there is no status or mode change.
+ * 1 segment, segment_failover is false because there is no status or mode change.
  */
 void
 test_PrimaryUpMirrorDownNotInSync_to_PrimayUpMirrorDownNotInSync(void **state)
@@ -1250,15 +1250,15 @@ test_PrimaryUpMirrorDownNotInSync_to_PrimayUpMirrorDownNotInSync(void **state)
 	expect_value(PQfinish, conn, context.perSegInfos[0].conn);
 	will_be_called(PQfinish);
 
-	bool is_updated = processResponse(&context);
+	processResponse(&context);
 
-	assert_false(is_updated);
+	assert_false(segment_failover);
 	assert_true(context.perSegInfos[0].conn == NULL);
 	assert_true(context.perSegInfos[0].state == FTS_RESPONSE_PROCESSED);
 }
 
 /*
- * 2 segments, is_updated is false, because content 0 mirror is already
+ * 2 segments, segment_failover is false because content 0 mirror is already
  * down and probe response fails. Means double fault scenario.
  */
 void
@@ -1294,9 +1294,9 @@ test_PrimaryUpMirrorDownNotInSync_to_PrimaryDown(void **state)
 	expect_value(PQfinish, conn, context.perSegInfos[1].conn);
 	will_be_called(PQfinish);
 
-	bool is_updated = processResponse(&context);
+	processResponse(&context);
 
-	assert_false(is_updated);
+	assert_false(segment_failover);
 	assert_true(context.perSegInfos[0].conn == NULL);
 	assert_true(context.perSegInfos[1].conn == NULL);
 	assert_true(context.perSegInfos[0].state == FTS_RESPONSE_PROCESSED);
