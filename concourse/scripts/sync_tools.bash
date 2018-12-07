@@ -44,16 +44,6 @@ function _main() {
          6)
            export JAVA_HOME=/usr/lib/jvm/java-1.7.0-openjdk.x86_64
            ;;
-
-         7)
-           echo "Detecting java7 path ..."
-           java7_packages=$(rpm -qa | grep -F java-1.7)
-           java7_bin="$(rpm -ql ${java7_packages} | grep /jre/bin/java$)"
-           alternatives --set java "$java7_bin"
-           export JAVA_HOME="${java7_bin/jre\/bin\/java/}"
-           ln -sf /usr/bin/xsubpp /usr/share/perl5/ExtUtils/xsubpp
-           ;;
-
         esac
         ;;
     *)
