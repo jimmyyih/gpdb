@@ -33,7 +33,6 @@ function prep_env_for_centos() {
   esac
 
   ln -sf $(pwd)/${GPDB_SRC_PATH}/gpAux/ext/${BLD_ARCH}/python-2.7.12 /opt/python-2.7.12
-  export PATH=${JAVA_HOME}/bin:${PATH}
 }
 
 function prep_env_for_sles() {
