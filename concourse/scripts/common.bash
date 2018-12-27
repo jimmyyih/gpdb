@@ -21,6 +21,13 @@ function install_gpdb() {
 function configure() {
   source /opt/gcc_env.sh
   pushd gpdb_src
+      # Compile with zstandard compression only for CentOS. More OS
+      # support will come later as respective build images start
+      # containing the library baked in.
+      if [ "$TEST_OS" == "centos" ]; then
+        CONFIGURE_FLAGS="${CONFIGURE_FLAGS} --with-zstd"
+      fi
+
       # The full set of configure options which were used for building the
       # tree must be used here as well since the toplevel Makefile depends
       # on these options for deciding what to test. Since we don't ship

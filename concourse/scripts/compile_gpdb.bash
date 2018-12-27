@@ -90,6 +90,16 @@ function unittest_check_gpdb() {
   popd
 }
 
+function include_zstd() {
+  pushd ${GREENPLUM_INSTALL_DIR}
+    if [ "${TARGET_OS}" == "centos" ] ; then
+      cp /usr/lib64/pkgconfig/libzstd.pc lib/pkgconfig/.
+      cp /usr/lib64/libzstd.so* lib/.
+      cp /usr/include/zstd*.h include/.
+    fi
+  popd
+}
+
 function export_gpdb() {
   TARBALL="${GPDB_ARTIFACTS_DIR}/${GPDB_BIN_FILENAME}"
   pushd ${GREENPLUM_INSTALL_DIR}
@@ -161,6 +171,14 @@ function _main() {
   # builds.
   export ADDON_DIR=addon
   export CONFIGURE_FLAGS=${CONFIGURE_FLAGS}
+
+  # Compile with zstandard compression only for CentOS. More OS
+  # support will come later as respective build images start
+  # containing the library baked in.
+  if [ "$TARGET_OS" == "centos" ]; then
+    export CONFIGURE_FLAGS="${CONFIGURE_FLAGS} --with-zstd"
+  fi
+
   # We cannot symlink the addon directory here because `make -C` resolves the
   # symlink and `cd`s to the actual directory. Currently the Makefile in the
   # addon directory assumes that it is located in a particular location under
@@ -178,6 +196,7 @@ function _main() {
       # require `./configure --with-zlib`.
       unittest_check_gpdb
   fi
+  include_zstd
   export_gpdb
   export_gpdb_extensions
   export_gpdb_win32_ccl

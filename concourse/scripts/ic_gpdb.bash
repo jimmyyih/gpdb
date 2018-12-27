@@ -42,6 +42,14 @@ function setup_gpadmin_user() {
     ./gpdb_src/concourse/scripts/setup_gpadmin_user.bash "$TEST_OS"
 }
 
+function setup_configure_vars() {
+    # We need to add GPHOME paths for configure to check for packaged
+    # libraries (e.g. ZStandard).
+    source /usr/local/greenplum-db-devel/greenplum_path.sh
+    export LDFLAGS="-L${GPHOME}/lib"
+    export CPPFLAGS="-I${GPHOME}/include"
+}
+
 function _main() {
     if [ -z "${MAKE_TEST_COMMAND}" ]; then
         echo "FATAL: MAKE_TEST_COMMAND is not set"
@@ -76,9 +84,10 @@ function _main() {
       ln -sf "$libperl_path" /lib64/libperl.so || return 1
     fi
 
-    time configure
     time install_gpdb
     time setup_gpadmin_user
+    time setup_configure_vars
+    time configure
     time make_cluster
     time gen_env
     time run_test
