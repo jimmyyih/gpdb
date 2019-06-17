@@ -2689,6 +2689,8 @@ CommitTransaction(void)
 	 */
 	s->state = TRANS_COMMIT;
 
+	LWLockAcquire(TwophaseCommitLock, LW_SHARED);
+
 	/*
 	 * Here is where we really truly commit.
 	 */
@@ -2732,6 +2734,8 @@ CommitTransaction(void)
 		 */
 		ProcArrayEndTransaction(MyProc, latestXid, false);
 	}
+
+	LWLockRelease(TwophaseCommitLock);
 
 	/*
 	 * This is all post-commit cleanup.  Note that if an error is raised here,

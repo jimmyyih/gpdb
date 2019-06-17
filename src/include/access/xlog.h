@@ -380,6 +380,6 @@ extern XLogRecPtr last_xlog_replay_location(void);
 extern void wait_for_mirror(void);
 extern bool IsRoleMirror(void);
 extern void SignalPromote(void);
-
+extern XLogRecPtr XLogClusterConsistentReplayPoint(const char *rpName);
 
 #endif   /* XLOG_H */

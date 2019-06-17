@@ -32,4 +32,6 @@ extern Datum pg_xlog_location_diff(PG_FUNCTION_ARGS);
 extern Datum pg_is_in_backup(PG_FUNCTION_ARGS);
 extern Datum pg_backup_start_time(PG_FUNCTION_ARGS);
 
+extern Datum gp_create_cluster_consistent_replay_point(PG_FUNCTION_ARGS);
+
 #endif   /* XLOG_FN_H */
