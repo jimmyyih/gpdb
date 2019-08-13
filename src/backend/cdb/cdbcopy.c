@@ -440,7 +440,7 @@ processCopyEndResults(CdbCopy *c,
 	PGresult   *res;
 	struct pollfd	*pollRead = (struct pollfd *) palloc(sizeof(struct pollfd));
 	int			segment_rows_rejected = 0;	/* num of rows rejected by this QE */
-	int			segment_rows_completed = 0; /* num of rows completed by this
+	int64			segment_rows_completed = 0; /* num of rows completed by this
 											 * QE */
 
 	for (seg = 0; seg < size; seg ++)
