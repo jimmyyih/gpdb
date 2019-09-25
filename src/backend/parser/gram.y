@@ -319,7 +319,7 @@ static Node *makeIsNotDistinctFromNode(Node *expr, int position);
 %type <ival>	vacuum_option_list vacuum_option_elem
 %type <boolean>	opt_or_replace
 				opt_grant_grant_option opt_grant_admin_option
-				opt_nowait opt_if_exists opt_with_data
+				opt_nowait opt_if_exists opt_with_data opt_masteronly
 %type <ival>	opt_nowait_or_skip
 
 %type <list>	OptRoleList AlterOptRoleList
@@ -12153,13 +12153,14 @@ using_clause:
  *
  *****************************************************************************/
 
-LockStmt:	LOCK_P opt_table relation_expr_list opt_lock opt_nowait
+LockStmt:	LOCK_P opt_table relation_expr_list opt_lock opt_nowait opt_masteronly
 				{
 					LockStmt *n = makeNode(LockStmt);
 
 					n->relations = $3;
 					n->mode = $4;
 					n->nowait = $5;
+					n->masteronly = $6;
 					$$ = (Node *)n;
 				}
 		;
@@ -12188,6 +12189,9 @@ opt_nowait_or_skip:
 			| /*EMPTY*/						{ $$ = LockWaitBlock; }
 		;
 
+opt_masteronly: MASTER ONLY					{ $$ = TRUE; }
+			| /*EMPTY*/						{ $$ = FALSE; }
+		;
 
 /*****************************************************************************
  *

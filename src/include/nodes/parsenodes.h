@@ -3416,6 +3416,7 @@ typedef struct LockStmt
 	List	   *relations;		/* relations to lock */
 	int			mode;			/* lock mode */
 	bool		nowait;			/* no wait mode */
+	bool		masteronly;		/* lock only on master */
 } LockStmt;
 
 /* ----------------------
