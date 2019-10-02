@@ -11110,9 +11110,67 @@ get_partition_recursive(PartitionNode *pn, deparse_context *head,
 	PartitionRule		*prev_rule		  = NULL;
 	char				*parname1		  = NULL;
 	int					 parrank		  = 0;
+	Oid					 root_part_relid;
+	List       *modified_child_partitions = NIL;
+	bool previous_partition_was_modified;
 
 	if (!pn)
 		return;
+
+	/* find child partitions that are defined differently than the root */
+	root_part_relid = pn->part->parrelid;
+	if (!bLeafTablename)
+	{
+		int proc;
+		int ret;
+		StringInfoData sqlstmt;
+		MemoryContext oldcontext = CurrentMemoryContext;
+
+		if (SPI_OK_CONNECT != SPI_connect())
+		{
+			ereport(ERROR,
+					(errcode(ERRCODE_INTERNAL_ERROR),
+					 errmsg("unable to obtain partition stuff"),
+					 errdetail("SPI_connect failed in get_partition_recursive")));
+		}
+
+		initStringInfo(&sqlstmt);
+		appendStringInfo(&sqlstmt, "select distinct(pr.parchildrelid) from pg_partition pp "
+						 "join pg_partition_rule pr on pr.paroid = pp.oid "
+						 "join pg_class p1 on pp.parrelid = p1.oid "
+						 "join pg_attribute_encoding p2 on p1.oid = p2.attrelid "
+						 "where p1.oid = %d and "
+						 "not exists (select 1 from pg_class p where pr.parchildrelid = p.oid and p.reloptions = p1.reloptions) "
+						 "or not exists (select 1 from pg_attribute_encoding p where pr.parchildrelid = p.attrelid and p.attnum = p2.attnum and p.attoptions = p2.attoptions)",
+						 root_part_relid);
+		ret = SPI_execute(sqlstmt.data, true, 0);
+		proc = (int) SPI_processed;
+
+		if (ret > 0 && SPI_tuptable != NULL)
+		{
+			TupleDesc   tupdesc = SPI_tuptable->tupdesc;
+			SPITupleTable *tuptable = SPI_tuptable;
+			int         i;
+			HeapTuple   tuple;
+			bool        isnull;
+			Datum oid_datum;
+			MemoryContext cxt_save;
+
+			cxt_save = MemoryContextSwitchTo(oldcontext);
+			for (i = 0; i < proc; i++)
+			{
+				tuple = tuptable->vals[i];
+				oid_datum = heap_getattr(tuple, 1, tupdesc, &isnull);
+				if (isnull)
+					break;
+
+				modified_child_partitions = lappend_oid(modified_child_partitions,
+														DatumGetObjectId(oid_datum));
+			}
+			MemoryContextSwitchTo(cxt_save);
+		}
+		SPI_finish();
+	}
 
 	if (*leveldone < pn->part->parlevel)
 	{
@@ -11155,6 +11213,7 @@ get_partition_recursive(PartitionNode *pn, deparse_context *head,
 		appendContextKeyword(body, "(", PRETTYINDENT_STD, 0, 2);
 
 	/* iterate through partitions */
+	previous_partition_was_modified = false;
 	foreach(lc, pn->rules)
 	{
 		rule = lfirst(lc);
@@ -11207,8 +11266,19 @@ get_partition_recursive(PartitionNode *pn, deparse_context *head,
 					/* check if have a named partition in a block of
 					 * anonymous every partitions
 					 */
+					// TODO: What if first partition is exchanged
 					if (rule->parname && strlen(rule->parname) && !parname1)
 						estat = false;
+					else if (list_member_oid(modified_child_partitions, rule->parchildrelid))
+					{
+						estat = false;
+						previous_partition_was_modified = true;
+					}
+					else if (previous_partition_was_modified)
+					{
+						estat = false;
+						previous_partition_was_modified = false;
+					}
 
 					/* note that the case of an unnamed partition in a
 					 * block of named every partitions is handled by
