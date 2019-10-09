@@ -465,11 +465,13 @@ static char *generate_operator_name(Oid operid, Oid arg1, Oid arg2);
 static void add_cast_to(StringInfo buf, Oid typid);
 static text *string_to_text(char *str);
 static char *flatten_reloptions(Oid relid);
+static List *get_reloptions_list(Oid relid);
 static void get_partition_recursive(PartitionNode *pn,
 									deparse_context *head,
 									deparse_context *body,
 									int16 *leveldone,
-									int bLeafTablename);
+									int bLeafTablename,
+									int relnatts);
 #define only_marker(rte)  ((rte)->inh ? "" : "ONLY ")
 
 
@@ -10598,6 +10600,43 @@ reloptions_to_string(Datum reloptions)
 	return result;
 }
 
+static List *
+get_reloptions_list(Oid relid)
+{
+	List	   *result = NIL;
+	HeapTuple	tuple;
+	Datum		reloptions;
+	bool		isnull;
+
+	tuple = SearchSysCache1(RELOID, ObjectIdGetDatum(relid));
+	if (!HeapTupleIsValid(tuple))
+		elog(ERROR, "cache lookup failed for relation %u", relid);
+
+	reloptions = SysCacheGetAttr(RELOID, tuple,
+								 Anum_pg_class_reloptions, &isnull);
+
+	Datum *options;
+	if (!isnull)
+	{
+		StringInfoData buf;
+		int			noptions;
+		int			i;
+
+		initStringInfo(&buf);
+
+		deconstruct_array(DatumGetArrayTypeP(reloptions),
+						  TEXTOID, -1, false, 'i',
+						  &options, NULL, &noptions);
+
+		for (i = 0; i < noptions; i++)
+			result = lappend(result, makeString(TextDatumGetCString(options[i])));
+	}
+
+	ReleaseSysCache(tuple);
+
+	return result;
+}
+
 /*
  * Generate a C string representing a relation's reloptions, or NULL if none.
  */
@@ -10881,6 +10920,47 @@ make_partition_column_encoding_str(Oid relid, int indent)
 	return str;
 }
 
+static List **
+get_partition_column_encoding_list(Oid relid)
+{
+	List **part_column_encodings;
+	Relation rel = heap_open(relid, AccessShareLock);
+	int num_attributes = RelationGetNumberOfAttributes(rel);
+	Datum *options;
+	int i;
+
+	if (!RelationIsAoCols(rel))
+	{
+		heap_close(rel, AccessShareLock);
+		return NULL;
+	}
+
+	part_column_encodings = palloc0(num_attributes * sizeof(List *));
+	options = get_rel_attoptions(relid, num_attributes);
+
+	for (i = 0; i < num_attributes; i++)
+	{
+		Datum *column_options;
+		int n_column_options;
+		List *column_option_list = NIL;
+		int j;
+
+		deconstruct_array(DatumGetArrayTypeP(options[i]),
+						  TEXTOID, -1, false, 'i',
+						  &column_options, NULL, &n_column_options);
+
+		for (j = 0; j < n_column_options; j++)
+			column_option_list = lappend(column_option_list,
+										 makeString(TextDatumGetCString(column_options[j])));
+
+		part_column_encodings[i] = column_option_list;
+	}
+
+	heap_close(rel, AccessShareLock);
+
+	return part_column_encodings;
+}
+
 static char *
 partition_rule_def_worker(PartitionRule *rule, Node *start,
 						  Node *end, PartitionRule *end_rule,
@@ -11156,7 +11236,8 @@ write_out_rule(PartitionRule *rule, PartitionNode *pn, Node *start,
 			   Node *every, deparse_context *head, deparse_context *body,
 			   bool handleevery, bool *needcomma,
 			   bool *first_rule, int16 *leveldone,
-			   PartitionNode *children, bool bLeafTablename)
+			   PartitionNode *children, bool bLeafTablename,
+			   int relnatts)
 {
 	char *str;
 
@@ -11222,7 +11303,7 @@ write_out_rule(PartitionRule *rule, PartitionNode *pn, Node *start,
 			pfree(col_enc);
 	}
 
-	get_partition_recursive(children, head, body, leveldone, bLeafTablename);
+	get_partition_recursive(children, head, body, leveldone, bLeafTablename, relnatts);
 
 	if (*first_rule)
 		*first_rule = false;
@@ -11232,7 +11313,8 @@ write_out_rule(PartitionRule *rule, PartitionNode *pn, Node *start,
 static void
 get_partition_recursive(PartitionNode *pn, deparse_context *head,
 						deparse_context *body,
-						int16 *leveldone, int bLeafTablename)
+						int16 *leveldone, int bLeafTablename,
+						int relnatts)
 {
 	PartitionRule		*rule			  = NULL;
 	ListCell			*lc;
@@ -11287,6 +11369,11 @@ get_partition_recursive(PartitionNode *pn, deparse_context *head,
 	if (pn->rules || pn->default_part)
 		appendContextKeyword(body, "(", PRETTYINDENT_STD, 0, 2);
 
+	/* start with root partition's reloptions and attribute encodings */
+	List *previous_reloptions = NIL;//get_reloptions_list(pn->part->parrelid);
+	List **previous_coloptions = NULL; //get_partition_column_encoding_list(pn->part->parrelid);
+	bool previous_partition_was_modified = false;
+
 	/* iterate through partitions */
 	foreach(lc, pn->rules)
 	{
@@ -11326,6 +11413,9 @@ get_partition_recursive(PartitionNode *pn, deparse_context *head,
 
 					}
 
+					previous_reloptions = get_reloptions_list(rule->parchildrelid);
+					previous_coloptions = get_partition_column_encoding_list(rule->parchildrelid);
+
 					if (first_every_rule)
 						continue;
 				}
@@ -11337,16 +11427,67 @@ get_partition_recursive(PartitionNode *pn, deparse_context *head,
 
 				if (estat)
 				{
-					/* check if have a named partition in a block of
-					 * anonymous every partitions
-					 */
-					if (rule->parname && strlen(rule->parname) && !parname1)
+					if (previous_partition_was_modified)
+					{
 						estat = false;
+						previous_partition_was_modified = false;
+						previous_reloptions = get_reloptions_list(rule->parchildrelid);
+						previous_coloptions = get_partition_column_encoding_list(rule->parchildrelid);
+					}
+					else
+					{
+						/* check if have a named partition in a block of
+						 * anonymous every partitions
+						 */
+						if (rule->parname && strlen(rule->parname) && !parname1)
+							estat = false;
 
-					/* note that the case of an unnamed partition in a
-					 * block of named every partitions is handled by
-					 * check_next_every_name...
-					 */
+						/* note that the case of an unnamed partition in a
+						 * block of named every partitions is handled by
+						 * check_next_every_name...
+						 */
+
+						/* get child partition's reloptions to do some comparisons */
+						List *child_reloptions = get_reloptions_list(rule->parchildrelid);
+
+						if ((previous_reloptions == NULL && child_reloptions != NULL)
+							|| (previous_reloptions != NULL && child_reloptions == NULL)
+							|| previous_reloptions->length != child_reloptions->length
+							|| list_difference(previous_reloptions, child_reloptions) != NIL)
+						{
+							estat = false;
+							previous_partition_was_modified = true;
+						}
+
+						List **child_coloptions = get_partition_column_encoding_list(rule->parchildrelid);
+						if (previous_coloptions != NULL && child_coloptions != NULL)
+						{
+							int i;
+							for (i = 0; i < relnatts; i++)
+							{
+								List *previous_coloption = previous_coloptions[i];
+								List *child_coloption = child_coloptions[i];
+								if (previous_coloption->length != child_coloption->length
+									|| list_difference(previous_coloption, child_coloption) != NIL)
+								{
+									estat = false;
+									previous_partition_was_modified = true;
+									break;
+								}
+							}
+						}
+						else if (previous_coloptions != NULL || child_coloptions != NULL)
+						{
+							estat = false;
+							previous_partition_was_modified = true;
+						}
+
+						if (previous_partition_was_modified)
+						{
+							previous_reloptions = child_reloptions;
+							previous_coloptions = child_coloptions;
+						}
+					}
 				}
 
 				if (estat && parname1)
@@ -11405,7 +11546,8 @@ get_partition_recursive(PartitionNode *pn, deparse_context *head,
 			   					   head, body, true, &needcomma, &first_rule,
 								   leveldone,
 								   first_every_rule->children,
-								   bLeafTablename);
+								   bLeafTablename,
+								   relnatts);
 					if (rule->parrangeevery)
 					{
 						first_every_rule = NULL;
@@ -11454,7 +11596,8 @@ get_partition_recursive(PartitionNode *pn, deparse_context *head,
 					   rule,
 					   rule->parrangeevery, head, body, false, &needcomma,
 					   &first_rule, leveldone,
-					   rule->children, bLeafTablename);
+					   rule->children, bLeafTablename,
+					   relnatts);
 	} /* end foreach */
 
 	if (first_every_rule)
@@ -11467,7 +11610,7 @@ get_partition_recursive(PartitionNode *pn, deparse_context *head,
 					   first_every_rule->parrangeevery,
    					   head, body, true, &needcomma, &first_rule, leveldone,
 					   first_every_rule->children,
-					   bLeafTablename);
+					   bLeafTablename, relnatts);
 	}
 
 	if (pn->default_part)
@@ -11477,7 +11620,7 @@ get_partition_recursive(PartitionNode *pn, deparse_context *head,
 					   head, body, false,
 					   &needcomma,
 					   &first_rule, leveldone, pn->default_part->children,
-					   bLeafTablename);
+					   bLeafTablename, relnatts);
 	}
 
 	if (pn->rules || pn->default_part)
@@ -11535,6 +11678,7 @@ pg_get_partition_template_def_worker(Oid relid, int prettyFlags,
 	deparse_context		partidc;
 	int					templatelevel = 1;
 	bool				bFirstOne	  = true;
+	int					relnatts = rel->rd_att->natts;
 
 	if (!pn)
 	{
@@ -11592,7 +11736,7 @@ pg_get_partition_template_def_worker(Oid relid, int prettyFlags,
 		pnt = get_parts(relid,
 						templatelevel, 0, true, true /*includesubparts*/);
 		get_partition_recursive(pnt, &headc, &bodyc, &leveldone,
-								bLeafTablename);
+								bLeafTablename, relnatts);
 
 		/* look at the prule for the default partition (or non-default
 		 * if necessary).  We need to build the partition identifier
@@ -11706,6 +11850,7 @@ pg_get_partition_def_worker(Oid relid, int prettyFlags, int bLeafTablename)
 	int16 leveldone = -1;
 	deparse_context headc;
 	deparse_context bodyc;
+	int relnatts = rel->rd_att->natts;
 
 	if (!pn)
 	{
@@ -11724,7 +11869,7 @@ pg_get_partition_def_worker(Oid relid, int prettyFlags, int bLeafTablename)
 	bodyc.indentLevel = 0;
 	bodyc.special_exprkind = EXPR_KIND_NONE;
 
-	get_partition_recursive(pn, &headc, &bodyc, &leveldone, bLeafTablename);
+	get_partition_recursive(pn, &headc, &bodyc, &leveldone, bLeafTablename, relnatts);
 
 	heap_close(rel, AccessShareLock);
 
