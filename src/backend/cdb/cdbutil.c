@@ -24,6 +24,7 @@
 
 #include <sys/param.h>			/* for MAXHOSTNAMELEN */
 #include "access/genam.h"
+#include "access/xlog.h"
 #include "catalog/gp_segment_config.h"
 #include "nodes/makefuncs.h"
 #include "utils/builtins.h"
@@ -520,7 +521,7 @@ getCdbComponentInfo(void)
 	{
 		cdbInfo = &component_databases->segment_db_info[i];
 
-		if (cdbInfo->config->role != GP_SEGMENT_CONFIGURATION_ROLE_PRIMARY || cdbInfo->config->hostip == NULL)
+		if ((!EnableHotStandby && cdbInfo->config->role != GP_SEGMENT_CONFIGURATION_ROLE_PRIMARY) || cdbInfo->config->hostip == NULL)
 			continue;
 
 		hsEntry = (HostSegsEntry *) hash_search(hostSegsHash, cdbInfo->config->hostip, HASH_FIND, &found);
@@ -532,7 +533,7 @@ getCdbComponentInfo(void)
 	{
 		cdbInfo = &component_databases->entry_db_info[i];
 
-		if (cdbInfo->config->role != GP_SEGMENT_CONFIGURATION_ROLE_PRIMARY || cdbInfo->config->hostip == NULL)
+		if ((!EnableHotStandby && cdbInfo->config->role != GP_SEGMENT_CONFIGURATION_ROLE_PRIMARY) || cdbInfo->config->hostip == NULL)
 			continue;
 
 		hsEntry = (HostSegsEntry *) hash_search(hostSegsHash, cdbInfo->config->hostip, HASH_FIND, &found);
@@ -987,7 +988,7 @@ cdbcomponent_getComponentInfo(int contentId)
 		Assert(cdbs->total_segment_dbs == cdbs->total_segments * 2);
 		cdbInfo = &cdbs->segment_db_info[2 * contentId];
 
-		if (!SEGMENT_IS_ACTIVE_PRIMARY(cdbInfo))
+		if (!SEGMENT_IS_ACTIVE_PRIMARY(cdbInfo) || EnableHotStandby)
 		{
 			cdbInfo = &cdbs->segment_db_info[2 * contentId + 1];
 		}
@@ -1024,7 +1025,8 @@ cdb_setup(void)
 	 */
 	if (!IsBackgroundWorker &&
 		Gp_role == GP_ROLE_DISPATCH &&
-		!*shmDtmStarted)
+		!*shmDtmStarted &&
+		!EnableHotStandby)
 	{
 		while (true)
 		{

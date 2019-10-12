@@ -1257,7 +1257,7 @@ StandbyTransactionIdIsPrepared(TransactionId xid)
 	 * files, so we cannot use ReadTwoPhaseFile() here. Fortunately, this
 	 * isn't needed until we try to use Hot Standby.
 	 */
-	elog(ERROR, "Hot Standby not supported");
+	elog(WARNING, "Greenplum Hot Standby has limited capability");
 #if 0
 	char	   *buf;
 	TwoPhaseFileHeader *hdr;
@@ -1789,7 +1789,7 @@ PrescanPreparedTransactions(TransactionId **xids_p, int *nxids_p)
 void
 StandbyRecoverPreparedTransactions(bool overwriteOK)
 {
-	elog(ERROR, "Hot Standby not supported");
+	elog(WARNING, "Greenplum Hot Standby has limited capability");
 }
 
 /*
