@@ -119,6 +119,7 @@
 #include "postmaster/pgarch.h"
 #include "postmaster/postmaster.h"
 #include "postmaster/fts.h"
+#include "postmaster/thanos.h"
 #include "postmaster/perfmon.h"
 #include "postmaster/syslogger.h"
 #include "postmaster/backoff.h"
@@ -375,6 +376,13 @@ static BackgroundWorker PMAuxProcList[MaxPMAuxProc] =
 	 0, /* restart immediately if ftsprobe exits with non-zero code */
 	 FtsProbeMain, {0}, {0}, 0, 0,
 	 FtsProbeStartRule},
+
+	{"thanos process",
+	 BGWORKER_SHMEM_ACCESS | BGWORKER_BACKEND_DATABASE_CONNECTION,
+	 BgWorkerStart_DtxRecovering, /* no need to wait dtx recovery */
+	 0, /* restart immediately if thanos exits with non-zero code */
+	 ThanosMain, {0}, {0}, 0, 0,
+	 ThanosStartRule},
 
 	{"global deadlock detector process",
 	 BGWORKER_SHMEM_ACCESS | BGWORKER_BACKEND_DATABASE_CONNECTION,

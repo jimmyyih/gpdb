@@ -5807,3 +5807,37 @@ pgstat_db_requested(Oid databaseid)
 
 	return false;
 }
+
+List *
+pg_stat_give_half_active_pids()
+{
+	List *random_list = NIL;
+	List *return_list = NIL;
+	int num_procs = 0;
+
+
+	for(int i = 0; i < MaxBackends; i++){
+		if (BackendStatusArray[i].st_state == STATE_RUNNING ){
+			random_list = lappend_int(random_list, BackendStatusArray[i].st_procpid);
+		}
+	}
+	if (random_list == NIL){
+		return return_list;
+	}
+
+	num_procs = random_list->length;
+	for (int i = num_procs-1; i >= 0; i--)
+	{
+		int tmp = list_nth_int(random_list, i);
+		int rand_idx = random() % (i+1);
+		list_nth_replace_int(random_list, i, list_nth_int(random_list, rand_idx));
+		list_nth_replace_int(random_list, rand_idx, tmp);
+	}
+
+	for(int i = 0; i < num_procs/2 +1; i++){
+		return_list = lappend_int(return_list, list_nth_int(random_list, i));
+	}
+
+
+	return return_list;
+}

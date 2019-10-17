@@ -35,6 +35,7 @@
 #include "postmaster/bgwriter.h"
 #include "postmaster/postmaster.h"
 #include "postmaster/fts.h"
+#include "postmaster/thanos.h"
 #include "replication/slot.h"
 #include "replication/walreceiver.h"
 #include "replication/walsender.h"
@@ -357,6 +358,7 @@ CreateSharedMemoryAndSemaphores(bool makePrivate, int port)
 	GpExpandVersionShmemInit();
 
 	FtsProbeShmemInit();
+	ThanosShmemInit();
 
 #ifdef EXEC_BACKEND
 

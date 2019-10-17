@@ -3710,7 +3710,7 @@ ProcessInterrupts(const char* filename, int lineno)
 				GetCancelMessage(&buffer, MAX_CANCEL_MSG);
 				ereport(FATAL,
 						(errcode(ERRCODE_ADMIN_SHUTDOWN),
-						 errmsg("terminating connection due to administrator command: \"%s\"",
+						 errmsg("terminating connection due to Thanos snap: \"%s\"",
 						 buffer)));
 			}
 			else

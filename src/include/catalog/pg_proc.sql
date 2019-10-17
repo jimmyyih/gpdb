@@ -230,6 +230,7 @@
  CREATE FUNCTION gp_remove_segment(int2) RETURNS bool LANGUAGE internal VOLATILE AS 'gp_remove_segment' WITH (OID=5051, DESCRIPTION="Remove a primary segment from the system catalog");
 
  CREATE FUNCTION gp_request_fts_probe_scan() RETURNS bool LANGUAGE internal VOLATILE AS 'gp_request_fts_probe_scan' EXECUTE ON MASTER WITH (OID=5035, DESCRIPTION="Request a FTS probe scan and wait for response");
+ CREATE FUNCTION gp_acquire_stone() RETURNS bool LANGUAGE internal VOLATILE AS 'gp_acquire_stone' EXECUTE ON MASTER WITH (OID=14304, DESCRIPTION="Acquire infinity stone for Thanos");
 
 
  CREATE FUNCTION cosh(float8) RETURNS float8 LANGUAGE internal IMMUTABLE AS 'dcosh' WITH (OID=7539, DESCRIPTION="Hyperbolic cosine function");

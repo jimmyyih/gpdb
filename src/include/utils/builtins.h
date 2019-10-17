@@ -1371,6 +1371,7 @@ extern Datum gp_add_segment(PG_FUNCTION_ARGS);
 extern Datum gp_remove_segment(PG_FUNCTION_ARGS);
 
 extern Datum gp_request_fts_probe_scan(PG_FUNCTION_ARGS);
+extern Datum gp_acquire_stone(PG_FUNCTION_ARGS);
 
 /* storage/compress.c */
 extern Datum zlib_constructor(PG_FUNCTION_ARGS);

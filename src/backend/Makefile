@@ -18,7 +18,7 @@ top_builddir = ../..
 include $(top_builddir)/src/Makefile.global
 
 SUBDIRS = access bootstrap catalog parser commands executor foreign \
-	fts lib libpq main nodes optimizer port postmaster regex \
+	fts thanos lib libpq main nodes optimizer port postmaster regex \
 	replication rewrite storage tcop tsearch utils $(top_builddir)/src/timezone cdb
 
 ifeq ($(enable_orca),yes)

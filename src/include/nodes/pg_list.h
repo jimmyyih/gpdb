@@ -261,6 +261,8 @@ extern List *list_copy(const List *list);
 extern List *list_copy_tail(const List *list, int nskip);
 
 extern void *list_nth_replace(List *list, int n, void *new_data);
+extern int list_nth_replace_int(List *list, int n, int new_data);
+extern Oid list_nth_replace_oid(List *list, int n, Oid new_data);
 
 /*
  * To ease migration to the new list API, a set of compatibility

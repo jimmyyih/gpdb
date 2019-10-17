@@ -229,6 +229,8 @@ pg_terminate_backend_msg(PG_FUNCTION_ARGS)
 	char 	   *msg = text_to_cstring(PG_GETARG_TEXT_PP(1));
 	int			r;
 
+	elog(LOG, "got pid %d with message '%s'", pid, msg);
+
 	r = pg_signal_backend(pid, SIGTERM, msg);
 
 	if (r == SIGNAL_BACKEND_NOSUPERUSER)

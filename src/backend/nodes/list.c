@@ -420,6 +420,28 @@ list_nth_replace(List *list, int n, void *new_data)
 	return old_data;
 }
 
+int
+list_nth_replace_int(List *list, int n, int new_data)
+{
+	ListCell *lc = NULL;
+	lc = list_nth_cell(list, n);
+	Assert(lc);
+	int old_data = lc->data.int_value;
+	lc->data.int_value = new_data;
+	return old_data;
+}
+
+Oid
+list_nth_replace_oid(List *list, int n, Oid new_data)
+{
+	ListCell *lc = NULL;
+	lc = list_nth_cell(list, n);
+	Assert(lc);
+	Oid old_data = lc->data.oid_value;
+	lc->data.oid_value = new_data;
+	return old_data;
+}
+
 /*
  * Return the data value contained in the n'th element of the
  * specified list. (List elements begin at 0.)
