@@ -1,0 +1,5 @@
+# gpdb replication slot api
+comment = 'more replication slot control'
+default_version = '1.0'
+module_pathname = '$libdir/gp_replication_slot_api'
+relocatable = true
