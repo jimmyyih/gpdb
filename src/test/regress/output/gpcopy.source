@@ -729,7 +729,7 @@ COPY (SELECT * FROM segment_reject_limit_from) TO '/tmp/segment_reject_limit<SEG
 -- 'COPY (SELECT ...) TO' on utility mode
 CREATE EXTERNAL WEB TABLE copy_cmd_utility(a text, b int)
   EXECUTE E'PGOPTIONS="-c gp_session_role=utility" \\
-    psql -p $GP_MASTER_PORT $GP_DATABASE $GP_USER -c \\
+    psql -X -p $GP_MASTER_PORT $GP_DATABASE $GP_USER -c \\
       "COPY (SELECT * FROM pg_class) TO \'/dev/null\'"'
   ON MASTER FORMAT 'text' (DELIMITER ' ');
 SELECT a FROM copy_cmd_utility;
@@ -1502,9 +1502,9 @@ NOTICE:  CREATE TABLE will create partition "sales_1_prt_nov17" for table "sales
 NOTICE:  CREATE TABLE will create partition "sales_1_prt_dec17" for table "sales"
 COPY sales (id, date, amt) FROM stdin;
 -- execute external psql here to get the message of COPY
-\! psql -c "COPY sales TO '/tmp/test_sales_<SEGID>' ON SEGMENT" regression
+\! psql -X -c "COPY sales TO '/tmp/test_sales_<SEGID>' ON SEGMENT" regression
 COPY 26
-\! psql -c "COPY sales FROM '/tmp/test_sales_<SEGID>' ON SEGMENT" regression
+\! psql -X -c "COPY sales FROM '/tmp/test_sales_<SEGID>' ON SEGMENT" regression
 COPY 26
 CREATE EXTERNAL WEB TABLE ext_dec17(LIKE sales_1_prt_dec17) EXECUTE 'printf "12\t2017-12-01\t20.00\n"' ON MASTER FORMAT 'text';
 ALTER TABLE sales ALTER PARTITION dec17 EXCHANGE PARTITION dec17 WITH TABLE ext_dec17 WITHOUT VALIDATION;
