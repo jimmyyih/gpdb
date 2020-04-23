@@ -549,7 +549,7 @@ static Node *makeIsNotDistinctFromNode(Node *expr, int position);
 %type <str>		QueueId
 %type <list>	var_list
 %type <str>		ColId ColLabel ColLabelNoAs var_name type_function_name param_name
-%type <keyword> PartitionIdentKeyword	
+%type <keyword> PartitionIdentKeyword PartitionIdentExtraKeyword
 %type <str>		PartitionColId
 %type <str>		NonReservedWord NonReservedWord_or_Sconst
 %type <str>		createdb_opt_name
@@ -16857,6 +16857,7 @@ keywords_ok_in_alias_no_as: PartitionIdentKeyword
 			;
 
 PartitionColId: PartitionIdentKeyword { $$ = pstrdup($1); }
+			| PartitionIdentExtraKeyword { $$ = pstrdup($1); }
 			| IDENT { $$ = pstrdup($1); }
 			;
 
@@ -17133,6 +17134,100 @@ PartitionIdentKeyword: ABORT_P
 			| LOG_P
 			| OUTER_P
 			| VERBOSE
+			;
+
+/*
+ * Extra unreserved keywords for PartitionColId. This list essentially
+ * supplements PartitionIdentKeyword with missing unreserved keywords from the
+ * unreserved_keyword list (except for EXPAND, REPLICA, TABLESPACE, and
+ * VALIDATE because of Partitioning syntax conflicts). This list is kept
+ * separate to not interfere with the keywords_ok_in_alias_no_as list.
+ */
+PartitionIdentExtraKeyword: ADD_P
+			| ALTER
+			| ALWAYS
+			| AT
+			| ATTRIBUTE
+			| CATALOG_P
+			| COMMENTS
+			| CONFIGURATION
+			| CONFLICT
+			| CONTINUE_P
+			| CURRENT_P
+			| DATA_P
+			| DAY_P
+			| DENY
+			| DEPENDS
+			| DICTIONARY
+			| DISCARD
+			| DOCUMENT_P
+			| DXL
+			| EVENT
+			| EXTENSION
+			| FAMILY
+			| FILTER
+			| FULLSCAN
+			| FUNCTIONS
+			| HOUR_P
+			| IDENTITY_P
+			| IGNORE_P
+			| IMPORT_P
+			| INITPLAN
+			| INLINE_P
+			| LABEL
+			| LEAKPROOF
+			| LOCKED
+			| LOGGED
+			| MAPPING
+			| MATERIALIZED
+			| METHOD
+			| MINUTE_P
+			| MONTH_P
+			| NOCREATEEXTTABLE
+			| OFF
+			| ORDERED
+			| ORDINALITY
+			| OVER
+			| PARALLEL
+			| PARSER
+			| PASSING
+			| PLANS
+			| POLICY
+			| PROGRAM
+			| RANDOMLY /* gp */
+			| READABLE
+			| READS
+			| RECURSIVE
+			| REF
+			| REFRESH
+			| REJECT_P /* gp */
+			| REPLICATED
+			| ROOTPARTITION
+			| SECOND_P
+			| SEQUENCES
+			| SERVER
+			| SKIP
+			| SNAPSHOT
+			| SQL_P
+			| STANDALONE_P
+			| STRIP_P
+			| TABLES
+			| TEXT_P
+			| TRANSFORM
+			| TYPES_P
+			| UNLOGGED
+			| VALIDATION /* gp */
+			| VARYING
+			| VIEWS
+			| WEB /* gp */
+			| WHITESPACE_P
+			| WITHIN
+			| WITHOUT
+			| WRAPPER
+			| WRITABLE
+			| XML_P
+			| YEAR_P
+			| YES_P
 			;
 
 /* Column identifier --- keywords that can be column, table, etc names.
