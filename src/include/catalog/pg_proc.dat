@@ -11449,6 +11449,11 @@
 { oid => 6998, descr => 'Create a named restore point on all segments',
    proname => 'gp_create_restore_point', prorows => '1000', proretset => 't', proparallel => 'u', provolatile => 'v', prorettype => 'record', proargtypes => 'text', prosrc => 'gp_create_restore_point' },
 
+{ oid => 6996, descr => 'Switch WAL segment files on all segments',
+   proname => 'gp_switch_wal', prorows => '1000', proretset => 't', proparallel => 'u', provolatile => 'v',
+   prorettype => 'record', proargnames => '{segment_id,pg_switch_wal}', proargtypes => '',
+   proallargtypes => '{int2,pg_lsn}', proargmodes => '{o,o}', prosrc => 'gp_switch_wal' },
+
 { oid => 7057, descr => 'compare two complex numbers',
    proname => 'complex_cmp', prorettype => 'int4', proargtypes => 'complex complex', prosrc => 'complex_cmp' },
 

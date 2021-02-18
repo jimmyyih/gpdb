@@ -163,3 +163,120 @@ gp_create_restore_point(PG_FUNCTION_ARGS)
 
 	SRF_RETURN_DONE(funcctx);
 }
+
+/*
+ * gp_switch_wal: a distributed way to switch WAL on the entire cluster
+ */
+Datum
+gp_switch_wal(PG_FUNCTION_ARGS)
+{
+	typedef struct Context
+	{
+		CdbPgResults cdb_pgresults;
+		XLogRecPtr	qd_switch_lsn;
+		int			index;
+	}			Context;
+
+	FuncCallContext *funcctx;
+	Context    *context;
+
+	if (SRF_IS_FIRSTCALL())
+	{
+		TupleDesc	tupdesc;
+		MemoryContext oldcontext;
+		char	   *switch_command;
+
+		/* create a function context for cross-call persistence */
+		funcctx = SRF_FIRSTCALL_INIT();
+
+		/* switch to memory context for appropriate multiple function call */
+		oldcontext = MemoryContextSwitchTo(funcctx->multi_call_memory_ctx);
+
+		/* create tupdesc for result */
+		tupdesc = CreateTemplateTupleDesc(2);
+		TupleDescInitEntry(tupdesc, (AttrNumber) 1, "segment_id", INT2OID, -1, 0);
+		TupleDescInitEntry(tupdesc, (AttrNumber) 2, "pg_switch_wal", LSNOID, -1, 0);
+
+		funcctx->tuple_desc = BlessTupleDesc(tupdesc);
+
+		context = (Context *) palloc(sizeof(Context));
+		context->cdb_pgresults.pg_results = NULL;
+		context->cdb_pgresults.numResults = 0;
+		context->index = 0;
+		funcctx->user_fctx = (void *) context;
+
+		if (!IS_QUERY_DISPATCHER())
+			elog(ERROR, "cannot use pg_switch_wal() when not in QD mode");
+
+		switch_command =
+				psprintf("SELECT pg_catalog.pg_switch_wal()");
+
+		CdbDispatchCommand(switch_command,
+				DF_NEED_TWO_PHASE | DF_CANCEL_ON_ERROR,
+				&context->cdb_pgresults);
+		context->qd_switch_lsn = DatumGetLSN(DirectFunctionCall1(pg_switch_wal, PointerGetDatum(NULL)));
+
+		pfree(switch_command);
+
+		funcctx->user_fctx = (void *) context;
+		MemoryContextSwitchTo(oldcontext);
+	}
+
+	/*
+	 * Using SRF to return all the segment switch WAL information of the form
+	 * {segment_id, pg_switch_wal}
+	 */
+	funcctx = SRF_PERCALL_SETUP();
+	context = (Context *) funcctx->user_fctx;
+
+	while (context->index <= context->cdb_pgresults.numResults)
+	{
+		Datum		values[2];
+		bool		nulls[2];
+		HeapTuple	tuple;
+		Datum		result;
+		XLogRecPtr	switch_ptr;
+		int			seg_index;
+		uint32		hi;
+		uint32		lo;
+
+		if (context->index == 0)
+		{
+			/* Setting fields representing QD's pg_switch_wal */
+			seg_index = GpIdentity.segindex;
+			switch_ptr = context->qd_switch_lsn;
+		}
+		else
+		{
+			/* Setting fields representing QE's pg_switch_wal */
+			seg_index = context->index - 1;
+			struct pg_result *pgresult = context->cdb_pgresults.pg_results[seg_index];
+			ExecStatusType resultStatus = PQresultStatus(pgresult);
+
+			if (resultStatus != PGRES_COMMAND_OK && resultStatus != PGRES_TUPLES_OK)
+				ereport(ERROR,
+						(errcode(ERRCODE_GP_INTERCONNECTION_ERROR),
+								(errmsg("could not switch WAL on segment"),
+										errdetail("%s", PQresultErrorMessage(pgresult)))));
+			Assert(PQntuples(pgresult) == 1);
+			sscanf(PQgetvalue(pgresult, 0, 0), "%X/%X", &hi, &lo);
+			switch_ptr = ((uint64) hi) << 32 | lo;
+		}
+
+		/*
+		 * Form tuple with appropriate data.
+		 */
+		MemSet(values, 0, sizeof(values));
+		MemSet(nulls, false, sizeof(nulls));
+
+		values[0] = Int16GetDatum(seg_index);
+		values[1] = LSNGetDatum(switch_ptr);
+		tuple = heap_form_tuple(funcctx->tuple_desc, values, nulls);
+		result = HeapTupleGetDatum(tuple);
+
+		context->index++;
+		SRF_RETURN_NEXT(funcctx, result);
+	}
+
+	SRF_RETURN_DONE(funcctx);
+}
