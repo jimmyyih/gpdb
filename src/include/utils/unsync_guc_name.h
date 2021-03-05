@@ -190,6 +190,7 @@
 		"gp_enable_preunique",
 		"gp_enable_query_metrics",
 		"gp_enable_relsize_collection",
+		"gp_enable_restore_point_recovery_pause",
 		"gp_enable_slow_writer_testmode",
 		"gp_enable_sort_distinct",
 		"gp_enable_sort_limit",
